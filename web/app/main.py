@@ -467,6 +467,8 @@ async def lifespan(app):
 
 app = FastAPI(
     lifespan=lifespan,
+    docs_url=None,  # served by the gated routes below
+    redoc_url=None,
     title="株式ポートフォリオ API",
     version="1.0.0",
     description=(
@@ -475,6 +477,36 @@ app = FastAPI(
         "このドキュメントは OpenAPI 仕様として /openapi.json でも取得できる。"
     ),
 )
+
+
+def _swagger_enabled():
+    with db() as conn:
+        return app_config(conn)["swagger_enabled"]
+
+
+@app.get("/docs", include_in_schema=False)
+def swagger_ui():
+    """Swagger UI, served only while the developer switch
+    (settings: swagger_enabled) is on. /openapi.json itself stays
+    available: it is the machine-readable spec for integrations."""
+    if not _swagger_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    from fastapi.openapi.docs import get_swagger_ui_html
+
+    return get_swagger_ui_html(
+        openapi_url="/openapi.json", title=f"{app.title} - Swagger UI"
+    )
+
+
+@app.get("/redoc", include_in_schema=False)
+def redoc_ui():
+    if not _swagger_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    from fastapi.openapi.docs import get_redoc_html
+
+    return get_redoc_html(
+        openapi_url="/openapi.json", title=f"{app.title} - ReDoc"
+    )
 
 
 @app.middleware("http")
@@ -861,7 +893,8 @@ def settings_view(st):
 def update_settings(conn, *, tax_rate_pct, target_dividend_total,
                     target_yield_buy_pct, target_yield_now_pct,
                     target_yield_value_pct, log_retention_days=90,
-                    otel_enabled=False, otel_endpoint=None):
+                    otel_enabled=False, otel_endpoint=None,
+                    swagger_enabled=False):
     # Monthly after-tax income target is derived, not entered directly:
     # annual dividend target x (1 - tax rate) / 12.
     monthly = round_half_up(target_dividend_total * (1 - tax_rate_pct / 100) / 12)
@@ -884,6 +917,7 @@ def update_settings(conn, *, tax_rate_pct, target_dividend_total,
     for k, v in (
         ("otel_enabled", "true" if otel_enabled else "false"),
         ("otel_endpoint", otel_endpoint or ""),
+        ("swagger_enabled", "true" if swagger_enabled else "false"),
     ):
         conn.execute(
             "INSERT INTO settings(key, value) VALUES (%s, %s)"
@@ -891,6 +925,7 @@ def update_settings(conn, *, tax_rate_pct, target_dividend_total,
             (k, v),
         )
     values["otel_enabled"] = bool(otel_enabled)
+    values["swagger_enabled"] = bool(swagger_enabled)
     return values
 
 
@@ -917,6 +952,7 @@ def app_config(conn):
         log_retention_days=retention_days,
         otel_enabled=_raw_setting(conn, "otel_enabled") == "true",
         otel_endpoint=_raw_setting(conn, "otel_endpoint") or "",
+        swagger_enabled=_raw_setting(conn, "swagger_enabled") == "true",
     )
 
 
@@ -1047,6 +1083,7 @@ class SettingsIn(BaseModel):
     log_retention_days: int = Field(default=90, ge=1, le=3650)
     otel_enabled: bool = False
     otel_endpoint: str | None = None
+    swagger_enabled: bool = False
 
 
 class BuyOut(BaseModel):
@@ -1102,6 +1139,7 @@ class SettingsOut(BaseModel):
     log_retention_days: int
     otel_enabled: bool
     otel_endpoint: str
+    swagger_enabled: bool
 
 
 @app.get("/api/v1/buys", response_model=list[BuyOut], tags=["buys"])

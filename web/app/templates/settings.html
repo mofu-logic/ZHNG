@@ -59,6 +59,20 @@
   </table>
   <div class="sub">構造化ログを OTLP/HTTP で外部コレクタへ送信します。変更は再起動なしで反映されます。送信に失敗してもアプリの動作には影響しません。</div>
 
+  <h3 style="margin-top:22px">開発者向け</h3>
+  <table>
+    <tbody>
+      <tr>
+        <td>APIテスト（Swagger UI）</td>
+        <td><input type="checkbox" name="swagger_enabled" {% if swagger_enabled %}checked{% endif %}></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="sub">有効な間だけ /docs（Swagger UI）へアクセスできます。普段は無効にしておくのがおすすめです。</div>
+  {% if swagger_enabled %}
+  <div style="margin-top:6px"><a href="/docs" target="_blank" rel="noopener">/docs を開く（Swagger UI）</a></div>
+  {% endif %}
+
   <div style="margin-top:14px"><button type="submit">保存する</button></div>
 </form>
 <script>
@@ -76,6 +90,7 @@
       log_retention_days: Number(f.get('log_retention_days')),
       otel_enabled: form.querySelector('[name="otel_enabled"]').checked,
       otel_endpoint: strOrNull(f.get('otel_endpoint')),
+      swagger_enabled: form.querySelector('[name="swagger_enabled"]').checked,
     });
     location.reload();
   });

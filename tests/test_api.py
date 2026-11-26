@@ -36,7 +36,8 @@ def test_openapi_document(client):
     assert ref.endswith("/BuyIn")
     resp_ref = post_buy["responses"]["201"]["content"]["application/json"]["schema"]["$ref"]
     assert resp_ref.endswith("/BuyOut")
-    assert client.get("/docs").status_code == 200
+    # The spec document itself is always available; the test UI is not.
+    assert client.get("/docs").status_code == 404
 
 
 def test_api_reads(client, db):
@@ -101,6 +102,32 @@ def test_settings_app_config_roundtrip(client, db):
     r = client.put("/api/v1/settings", json=KPI_PAYLOAD)
     assert r.json()["log_retention_days"] == 90
     assert r.json()["otel_enabled"] is False
+    assert r.json()["swagger_enabled"] is False
+
+
+def test_swagger_ui_gate(client, db):
+    # Off by default: neither docs UI is served.
+    assert client.get("/docs").status_code == 404
+    assert client.get("/redoc").status_code == 404
+    page = client.get("/settings").text
+    assert "開発者向け" in page
+    assert 'href="/docs"' not in page
+
+    r = client.put(
+        "/api/v1/settings", json={**KPI_PAYLOAD, "swagger_enabled": True}
+    )
+    assert r.json()["swagger_enabled"] is True
+    assert client.get("/docs").status_code == 200
+    assert "swagger" in client.get("/docs").text.lower()
+    assert client.get("/redoc").status_code == 200
+    # The settings page shows the /docs link while the switch is on.
+    assert 'href="/docs"' in client.get("/settings").text
+
+    client.put(
+        "/api/v1/settings", json={**KPI_PAYLOAD, "swagger_enabled": False}
+    )
+    assert client.get("/docs").status_code == 404
+    assert 'href="/docs"' not in client.get("/settings").text
 
 
 def test_log_retention_prunes_on_update(client, db):
