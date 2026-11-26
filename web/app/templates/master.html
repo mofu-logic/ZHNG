@@ -6,7 +6,7 @@
 <table id="master">
   <thead><tr>
     <th class="sortable" data-type="str">銘柄コード</th><th class="sortable" data-type="str">銘柄名</th><th class="sortable num" data-type="num">配当（年・1株）</th><th class="sortable num" data-type="num">優待体感額</th><th class="sortable" data-type="str">優待内容</th>
-    <th class="sortable" data-type="str">判断日</th><th class="sortable" data-type="str">判断メモ</th><th class="sortable" data-type="str">方針</th><th class="sortable" data-type="str">資金化対象</th><th></th>
+    <th class="sortable" data-type="str">判断日</th><th class="sortable" data-type="str">判断メモ</th><th class="sortable" data-type="str">方針</th><th class="sortable" data-type="str">売却候補</th><th></th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
@@ -19,7 +19,7 @@
       <td>{{ r.judgment_on or '' }}</td>
       <td>{% if r.judgment_note %}{% if r.judgment_note|length > 20 %}<span class="memo-tip" data-tip="{{ r.judgment_note }}">{{ r.judgment_note[:20] }}…</span>{% else %}{{ r.judgment_note }}{% endif %}{% endif %}</td>
       <td>{{ r.policy or '' }}</td>
-      <td>{{ '対象' if r.funding_target else '―' }}</td>
+      <td>{{ '候補' if r.funding_target else '―' }}</td>
       <td class="nowrap"><button type="button" class="delbtn" style="color:#20304d" data-edit-benefit="{{ r.code }}" data-name="{{ r.name or '' }}">編集</button></td>
     </tr>
   {% endfor %}
@@ -144,7 +144,7 @@
       const fundCheck = document.createElement('input');
       fundCheck.type = 'checkbox';
       fundCheck.checked = !!cur.funding_target;
-      fundLabel.append(fundCheck, document.createTextNode(' 資金化対象'));
+      fundLabel.append(fundCheck, document.createTextNode('売却候補'));
       form.append(valueLabel, descLabel, onLabel, noteLabel, policyLabel, fundLabel);
       const btns = document.createElement('div');
       btns.className = 'dlg-btns';
