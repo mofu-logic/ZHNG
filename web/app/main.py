@@ -12,6 +12,7 @@ import logging
 import os
 import random
 import re
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -25,11 +26,16 @@ from psycopg.rows import dict_row
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 
+from app.observability import OtelBridgeHandler, emit_event, setup_observability
+
+tracer = setup_observability(DATABASE_URL)
+
 logger = logging.getLogger("stock-app")
 if not logger.handlers:
-    _h = logging.StreamHandler()
-    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    logger.addHandler(_h)
+    # Records are bridged into the OpenTelemetry logs pipeline
+    # (structured JSON on stdout + the app_logs table). See
+    # app/observability.py.
+    logger.addHandler(OtelBridgeHandler())
     logger.setLevel(logging.INFO)
     logger.propagate = False
 JST = ZoneInfo("Asia/Tokyo")
@@ -80,6 +86,11 @@ CREATE TABLE IF NOT EXISTS daily_snapshots(
   per numeric, pbr numeric,
   captured_at timestamptz, source text,
   PRIMARY KEY (code, snap_date));
+CREATE TABLE IF NOT EXISTS app_logs(
+  id serial PRIMARY KEY, ts timestamptz NOT NULL, severity text,
+  severity_number integer, body text, attributes jsonb,
+  trace_id text, span_id text);
+CREATE INDEX IF NOT EXISTS app_logs_ts_idx ON app_logs(ts DESC);
 """
 
 
@@ -213,6 +224,7 @@ async def fetch_all(note="manual"):
                 (note, len(targets)),
             ).fetchone()["id"]
             conn.commit()
+        emit_event("fetch.started", run_id=run_id, kind=note, total=len(targets))
         ok = ng = 0
         first_error = None
         async with httpx.AsyncClient(headers={"User-Agent": UA}, timeout=25) as client:
@@ -318,6 +330,13 @@ async def fetch_all(note="manual"):
                     ok += 1
                 except Exception as e:
                     ng += 1
+                    emit_event(
+                        "fetch.code_failed",
+                        severity="WARNING",
+                        run_id=run_id,
+                        code=code,
+                        error=f"{type(e).__name__}: {e}"[:200],
+                    )
                     if first_error is None:
                         first_error = f"{type(e).__name__}: {e}"[:120]
                 with db() as conn:
@@ -367,6 +386,7 @@ async def fetch_all(note="manual"):
         except Exception:
             logger.exception("Nikkei 225 fetch failed (run %s)", run_id)
         await _finish_run(run_id, ok, ng, first_error)
+        emit_event("fetch.finished", run_id=run_id, kind=note, ok=ok, ng=ng)
 
 
 async def _finish_run(run_id, ok, ng, first_error):
@@ -427,12 +447,35 @@ async def lifespan(app):
         conn.commit()
         if cur.rowcount:
             logger.warning("closed %s stale fetch run(s) at startup", cur.rowcount)
+        # Operation logs are kept for 90 days.
+        conn.execute("DELETE FROM app_logs WHERE ts < now() - interval '90 days'")
+        conn.commit()
+    emit_event("app.started")
     task = asyncio.create_task(scheduler())
     yield
     task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def request_logging(request: Request, call_next):
+    path = request.url.path
+    if path in ("/healthz", "/api/fetch-status"):
+        # Health checks and the data page's polling would flood the log.
+        return await call_next(request)
+    start = time.perf_counter()
+    with tracer.start_as_current_span(f"{request.method} {path}"):
+        response = await call_next(request)
+        emit_event(
+            "http.request",
+            method=request.method,
+            path=path,
+            status=response.status_code,
+            duration_ms=round((time.perf_counter() - start) * 1000, 1),
+        )
+        return response
 
 
 def round_half_up(v):
@@ -725,11 +768,13 @@ def buy_create(
     status: str = Form("約定済"),
 ):
     code, name = _s(code), _s(name)
+    final_status = status if status in ("注文中", "一部約定", "約定済") else "約定済"
     with db() as conn:
         _upsert_stock(conn, code, name)
-        conn.execute(
+        lot_id = conn.execute(
             "INSERT INTO buy_lots(code, name, avg_price, shares, purchase_date,"
-            " policy, trigger_note, note, status) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            " policy, trigger_note, note, status) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+            " RETURNING id",
             (
                 code,
                 name,
@@ -739,10 +784,11 @@ def buy_create(
                 _s(policy),
                 _s(trigger_note),
                 _s(note),
-                status if status in ("注文中", "一部約定", "約定済") else "約定済",
+                final_status,
             ),
-        )
+        ).fetchone()["id"]
         conn.commit()
+    emit_event("history.buy_created", id=lot_id, code=code, status=final_status)
     return RedirectResponse("/history", status_code=303)
 
 
@@ -751,6 +797,7 @@ def buy_delete(lot_id: int):
     with db() as conn:
         conn.execute("DELETE FROM buy_lots WHERE id = %s", (lot_id,))
         conn.commit()
+    emit_event("history.buy_deleted", id=lot_id)
     return RedirectResponse("/history", status_code=303)
 
 
@@ -786,11 +833,11 @@ def sell_create(
             status = "注文中"
     with db() as conn:
         _upsert_stock(conn, code, name)
-        conn.execute(
+        sale_id = conn.execute(
             "INSERT INTO sales(code, name, buy_price, shares, purchase_date,"
             " sell_price, sell_shares, executed_shares, order_start_date,"
             " executed_date, profit, status, memo)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (
                 code,
                 name,
@@ -806,8 +853,12 @@ def sell_create(
                 status,
                 _s(memo),
             ),
-        )
+        ).fetchone()["id"]
         conn.commit()
+    sell_attrs = dict(id=sale_id, code=code, status=status)
+    if pf is not None:
+        sell_attrs["profit"] = float(pf)
+    emit_event("history.sell_created", **sell_attrs)
     return RedirectResponse("/history#sell", status_code=303)
 
 
@@ -816,6 +867,7 @@ def sell_delete(sale_id: int):
     with db() as conn:
         conn.execute("DELETE FROM sales WHERE id = %s", (sale_id,))
         conn.commit()
+    emit_event("history.sell_deleted", id=sale_id)
     return RedirectResponse("/history#sell", status_code=303)
 
 
@@ -864,6 +916,7 @@ def master_update(
             ),
         )
         conn.commit()
+    emit_event("master.updated", code=code)
     return RedirectResponse("/master", status_code=303)
 
 
@@ -911,6 +964,7 @@ def settings_update(
                 (k, repr(v)),
             )
         conn.commit()
+    emit_event("settings.updated", **values)
     return RedirectResponse("/settings", status_code=303)
 
 
@@ -975,6 +1029,36 @@ def fetch_status():
 def fetch_now(background: BackgroundTasks):
     background.add_task(fetch_all, "manual")
     return RedirectResponse("/data", status_code=303)
+
+
+_SEVERITY_NUMBERS = {"DEBUG": 5, "INFO": 9, "WARNING": 13, "ERROR": 17}
+
+
+@app.get("/logs", response_class=HTMLResponse)
+def logs_page(request: Request, severity: str = "", q: str = ""):
+    clauses, params = [], []
+    if severity in _SEVERITY_NUMBERS:
+        clauses.append("severity_number >= %s")
+        params.append(_SEVERITY_NUMBERS[severity])
+    if q:
+        clauses.append("(body ILIKE %s OR attributes::text ILIKE %s)")
+        params += [f"%{q}%", f"%{q}%"]
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    with db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM app_logs{where} ORDER BY id DESC LIMIT 200",
+            params,
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        attrs = d.get("attributes") or {}
+        d["attrs_text"] = ", ".join(f"{k}={v}" for k, v in attrs.items())
+        d["ts_text"] = r["ts"].strftime("%m-%d %H:%M:%S") if r["ts"] else ""
+        out.append(d)
+    return templates.TemplateResponse(
+        request, "logs.html", dict(rows=out, severity=severity, q=q)
+    )
 
 
 @app.get("/healthz")

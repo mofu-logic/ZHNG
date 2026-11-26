@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}動作ログ{% endblock %}
+{% block content %}
+<h2>動作ログ</h2>
+<p class="sub">構造化ログ（OpenTelemetry 形式）の直近200件。保持期間は90日です。</p>
+
+<form class="filters" method="get" action="/logs">
+  <label>レベル
+    <select name="severity">
+      <option value="" {% if not severity %}selected{% endif %}>すべて</option>
+      <option value="DEBUG" {% if severity == "DEBUG" %}selected{% endif %}>DEBUG以上</option>
+      <option value="INFO" {% if severity == "INFO" %}selected{% endif %}>INFO以上</option>
+      <option value="WARNING" {% if severity == "WARNING" %}selected{% endif %}>WARNING以上</option>
+      <option value="ERROR" {% if severity == "ERROR" %}selected{% endif %}>ERRORのみ</option>
+    </select>
+  </label>
+  <label>検索
+    <input type="text" name="q" value="{{ q }}" placeholder="イベント名・属性">
+  </label>
+  <button type="submit">絞り込む</button>
+</form>
+
+<div class="tblwrap">
+<table>
+  <thead>
+    <tr><th>日時</th><th>レベル</th><th>イベント</th><th>詳細</th></tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="nowrap">{{ r.ts_text }}</td>
+      <td class="nowrap {% if r.severity in ('ERROR', 'WARN') %}neg{% endif %}">{{ r.severity }}</td>
+      <td class="nowrap">{{ r.body }}</td>
+      <td>{{ r.attrs_text }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">ログがありません。</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

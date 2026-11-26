@@ -25,6 +25,7 @@ from psycopg.rows import dict_row
 from app import main
 
 TABLES = [
+    "app_logs",
     "dividend_changes",
     "daily_snapshots",
     "price_points",

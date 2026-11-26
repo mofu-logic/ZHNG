@@ -7,7 +7,8 @@
 
 個人用の株式ポートフォリオ管理 Web アプリ。Python + FastAPI + Jinja2
 （サーバサイド描画）、PostgreSQL、docker compose の2コンテナ（`web` + `db`）。
-アプリのコードは単一モジュール `web/app/main.py`。
+アプリのコードは `web/app/main.py` が中心で、構造化ログ基盤が
+`web/app/observability.py` に分かれている。
 設計判断と計算式は `DESIGN.md` にあるので、計算を変更する前に読むこと。
 
 ## ハードルール（Public リポジトリ）
@@ -64,3 +65,7 @@
   PR はスカッシュマージする。
 - **スキル化の提案：** 依頼された作業がスキルとして切り出せそうなら、
   スキル化を提案する。
+- **動作ログ：** 運用上あとから追う必要のある出来事（取得の成否、
+  データの追加・削除・更新など）は、`emit_event` で構造化ログに
+  残すこと。ログ基盤は OpenTelemetry 前提（`web/app/observability.py`）
+  で、エクスポータを足せば外部連携できる形を崩さない。
