@@ -30,7 +30,8 @@
   .kpi { flex: 1 1 30%; min-width: 280px; background: #fff; border: 1px solid #dde2ea; border-radius: 10px; padding: 10px 14px; }
   .kpi .k { font-size: 20px; font-weight: 700; color: #20304d; display: flex; align-items: center; gap: 8px; }
   .help { position: relative; margin-left: auto; flex: none; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid #38557f; color: #38557f; background: #e8eff7; font-size: 14px; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; cursor: help; }
-  .help::after { content: attr(data-tip); position: absolute; right: 0; top: calc(100% + 8px); width: 270px; white-space: normal; background: #20304d; color: #fff; font-size: 13px; font-weight: 400; line-height: 1.6; padding: 10px 12px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.25); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 30; }
+  .help::after { content: attr(data-tip); position: absolute; right: 0; top: calc(100% + 8px); width: 270px; white-space: pre-line; background: #20304d; color: #fff; font-size: 13px; font-weight: 400; line-height: 1.6; padding: 10px 12px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.25); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 30; }
+  .help.tip-right::after { right: auto; left: 0; }
   .help:hover::after, .help:focus::after { opacity: 1; }
   .kpi .v { font-size: 23px; font-weight: 700; margin-top: 2px; }
   .kpi .t { font-size: 13.5px; color: #5b6575; margin-top: 2px; }

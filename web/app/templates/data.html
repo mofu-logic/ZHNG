@@ -1,11 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>データ更新</h2>
-<div class="sub">
-  株価と配当（会社予想）は Yahoo!ファイナンスの銘柄ページから取得します（東証は .T、名証は .N）。
-  夜間バッチは毎日 1:00 JST に自動実行されます。手動でも取得できます。
-  レート制限を避けるため1件ごとに25〜45秒の間隔を空けて取得するので、全銘柄で40分前後かかります。
-  取得した1株配当（会社予想）は、配当・優待マスタへ自動で反映されます。
+<div style="display:flex; align-items:center; gap:10px">
+  <h2>データ更新</h2>
+  <span class="help tip-right" style="margin-left:0" tabindex="0" data-tip="株価と配当は夜間バッチで毎日 1:00 JST に自動実行されます。
+レート制限を避けるため1件ごとに25〜45秒の間隔を空けるため全件の取得には時間がかかります。
+取得した1株配当は、配当・優待マスタへ自動で反映されます。">?</span>
 </div>
 <div class="sub" id="run-status" style="margin-top:8px; font-size:14px">
   {% if fetching %}取得を実行中です…{% endif %}
