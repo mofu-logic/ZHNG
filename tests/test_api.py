@@ -2,7 +2,7 @@
 
 The API is the single interface for trades, the dividend/benefit
 master and the settings: the web UI uses it, and future integrations
-use the same paths and shapes (see DESIGN.md).
+use the same paths and shapes (see ARCHITECTURE.md).
 """
 from conftest import seed_stock_holding
 

@@ -1,7 +1,7 @@
 # AGENTS.md
 
 このリポジトリで作業する AI エージェント（と人間）向けの指針。
-このファイルは短く保つこと。詳細は `DESIGN.md` と `.agents/skills/` にある。
+このファイルは短く保つこと。詳細は `ARCHITECTURE.md` と `.agents/skills/` にある。
 
 ## これは何か
 
@@ -9,7 +9,7 @@
 （サーバサイド描画）、PostgreSQL、docker compose の2コンテナ（`web` + `db`）。
 アプリのコードは `web/app/main.py` が中心で、構造化ログ基盤が
 `web/app/observability.py` に分かれている。
-設計判断と計算式は `DESIGN.md` にあるので、計算を変更する前に読むこと。
+設計判断と計算式は `ARCHITECTURE.md` にあるので、計算を変更する前に読むこと。
 
 ## ハードルール（Public リポジトリ）
 
@@ -18,7 +18,7 @@
   コミットしない。`.env`、シードデータ、データ変換スクリプトは
   gitignore 済み — その状態を維持すること。CI は push のたびに
   gitleaks を実行する。
-- `DESIGN.md` は公開可能な設計書：考え方と計算式のみで、実額や
+- `ARCHITECTURE.md` は公開可能な設計書：考え方と計算式のみで、実額や
   保有銘柄の具体名は書かない。編集時もその方針を守ること。
 
 ## ドメインの不変条件

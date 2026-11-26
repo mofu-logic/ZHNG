@@ -40,7 +40,7 @@ description: /api/v1 にリソースを追加・変更する手順（サービ�
      （作成→参照→削除）。
    - run-tests スキルで実行し、分岐カバレッジ 95% を維持する。
 6. **文書を更新する**
-   - DESIGN.md の Web API の節にエンドポイントと仕様（導出の
+   - ARCHITECTURE.md の Web API の節にエンドポイントと仕様（導出の
      ルール、編集不可の項目など）を追記する。
 7. **デプロイして本番で確認する**
    - `docker compose up -d --build web` のあと、全画面 200、
