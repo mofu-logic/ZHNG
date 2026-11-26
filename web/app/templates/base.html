@@ -7,13 +7,14 @@
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif; color: #1c2330; background: #f6f7f9; font-size: 16px; }
-  header { background: #20304d; color: #fff; padding: 8px 14px; display: flex; gap: 12px; align-items: center; }
+  :root { --header-h: 50px; }
+  header { background: #20304d; color: #fff; padding: 8px 14px; display: flex; gap: 12px; align-items: center; height: var(--header-h); position: sticky; top: 0; z-index: 50; }
   header .logo { font-weight: 700; font-size: 18px; }
   #sidebar-toggle { background: transparent; border: none; color: #fff; padding: 6px; display: inline-flex; border-radius: 8px; }
   #sidebar-toggle:hover { background: rgba(255,255,255,.14); }
   #sidebar-toggle svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
   .layout { display: flex; align-items: stretch; }
-  #sidebar { width: 216px; flex: none; background: #fff; border-right: 1px solid #dde2ea; padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; height: 100vh; overflow-y: auto; overflow-x: hidden; transition: width .18s ease; }
+  #sidebar { width: 216px; flex: none; background: #fff; border-right: 1px solid #dde2ea; padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: var(--header-h); height: calc(100vh - var(--header-h)); height: calc(100dvh - var(--header-h)); overflow-y: auto; overflow-x: hidden; transition: width .18s ease; }
   .side-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; color: #1c2330; text-decoration: none; font-size: 15px; white-space: nowrap; }
   .side-item:hover { background: #eef1f6; }
   .side-item.active { background: #e8eff7; color: #20304d; font-weight: 700; }
