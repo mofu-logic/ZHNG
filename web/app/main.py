@@ -199,9 +199,22 @@ def _page_fields(html):
     return fields
 
 
+# Yahoo! Finance Japan quote pages are suffixed per exchange:
+# .T Tokyo, .N Nagoya, .S Sapporo, .F Fukuoka (verified live:
+# 2928 RIZAP is .S only, 1771 is .F only).
+EXCHANGE_SUFFIXES = (("T", "東証"), ("N", "名証"), ("S", "札証"), ("F", "福証"))
+
+
+def suffix_for_market(market):
+    for suffix, name in EXCHANGE_SUFFIXES:
+        if name == market:
+            return suffix
+    return "T"
+
+
 def parse_jp_page(html):
     """Extract the current price and the labeled data-list values from a
-    Yahoo! Finance Japan quote page (finance.yahoo.co.jp/quote/{code}.T|.N)."""
+    Yahoo! Finance Japan quote page (finance.yahoo.co.jp/quote/{code}.T|.N|.S|.F)."""
     m = re.search(r"_PriceBoard.*?_StyledNumber__value_[^\"]*\">([\d,]+)<", html, re.S)
     price = float(m.group(1).replace(",", "")) if m else None
     return price, _page_fields(html)
@@ -345,9 +358,10 @@ async def fetch_all(note="manual"):
             for t in targets:
                 code = t["code"]
                 # All quotes come from the Yahoo! Finance Japan quote pages
-                # (.T for Tokyo, .N for Nagoya). The pages also carry the
-                # company-forecast dividend, which auto-updates the master.
-                suffix = "N" if t["market"] == "名証" else "T"
+                # (suffix per exchange: .T/.N/.S/.F). The pages also carry
+                # the company-forecast dividend, which auto-updates the
+                # master.
+                suffix = suffix_for_market(t["market"])
                 try:
                     r = await client.get(
                         f"https://finance.yahoo.co.jp/quote/{code}.{suffix}"
@@ -431,11 +445,11 @@ async def fetch_all(note="manual"):
 
 async def fetch_one_quote(code):
     """Fetch one code right now (used when a purchase candidate is
-    registered). Tries the Tokyo suffix first, then Nagoya.
+    registered). Tries each exchange suffix in EXCHANGE_SUFFIXES order.
     Returns (market, name, price, fields); raises RuntimeError when
     the code cannot be fetched at all."""
     async with httpx.AsyncClient(headers={"User-Agent": UA}, timeout=25) as client:
-        for suffix, market in (("T", "東証"), ("N", "名証")):
+        for suffix, market in EXCHANGE_SUFFIXES:
             r = await client.get(
                 f"https://finance.yahoo.co.jp/quote/{code}.{suffix}"
             )

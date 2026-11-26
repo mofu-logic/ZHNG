@@ -253,3 +253,50 @@ def test_lifespan_closes_stale_runs(db):
     run = db.execute("SELECT * FROM fetch_runs").fetchone()
     assert run["finished_at"] is not None
     assert "interrupted (closed at startup)" in run["note"]
+
+
+class SuffixFakeClient:
+    """Serves the JP page only for URLs ending in one given suffix."""
+
+    def __init__(self, ok_suffix, headers=None, timeout=None):
+        self.ok_suffix = ok_suffix
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url):
+        if url.endswith("." + self.ok_suffix):
+            return FakeResponse(200, JP_PAGE)
+        return FakeResponse(404, "not found")
+
+
+def test_suffix_for_market():
+    assert main.suffix_for_market("東証") == "T"
+    assert main.suffix_for_market("名証") == "N"
+    assert main.suffix_for_market("札証") == "S"
+    assert main.suffix_for_market("福証") == "F"
+    assert main.suffix_for_market(None) == "T"
+    assert main.suffix_for_market("不明") == "T"
+
+
+def test_fetch_one_quote_falls_back_to_sapporo(monkeypatch):
+    monkeypatch.setattr(
+        main.httpx, "AsyncClient",
+        lambda **kw: SuffixFakeClient("S", **kw),
+    )
+    market, name, price, fields = asyncio.run(main.fetch_one_quote("2928"))
+    assert market == "札証"
+    assert price == 1000.0
+
+
+def test_fetch_one_quote_falls_back_to_fukuoka(monkeypatch):
+    monkeypatch.setattr(
+        main.httpx, "AsyncClient",
+        lambda **kw: SuffixFakeClient("F", **kw),
+    )
+    market, name, price, fields = asyncio.run(main.fetch_one_quote("1771"))
+    assert market == "福証"
+    assert price == 1000.0
