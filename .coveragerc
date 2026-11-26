@@ -1,0 +1,4 @@
+[run]
+# Branch coverage (C1): measure that both sides of each branch are
+# taken, not just that each line ran (C0).
+branch = True
