@@ -3,25 +3,23 @@
 <h2>配当・優待マスタ</h2>
 <div class="sub">優待と判断メモは手で更新してください。保存すると記載更新日が今日になります。</div>
 <div class="tblwrap" style="margin-top:10px">
-<table>
+<table id="master">
   <thead><tr>
-    <th>銘柄コード</th><th>銘柄名</th><th>配当（年・1株）</th><th>優待体感額</th><th>優待内容</th>
-    <th>判断日</th><th>判断メモ</th><th>資金化対象</th><th></th>
+    <th class="sortable" data-type="str">銘柄コード</th><th class="sortable" data-type="str">銘柄名</th><th class="sortable num" data-type="num">配当（年・1株）</th><th class="sortable num" data-type="num">優待体感額</th><th class="sortable" data-type="str">優待内容</th>
+    <th class="sortable" data-type="str">判断日</th><th class="sortable" data-type="str">判断メモ</th><th class="sortable" data-type="str">資金化対象</th><th></th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
-      <form data-code="{{ r.code }}">
       <td class="code">{{ r.code }}<br><span class="code">更新 {{ r.info_updated_on or '―' }}</span></td>
       <td><span class="name">{{ r.name or '' }}</span></td>
-      <td class="num">{{ r.dividend_auto if r.dividend_auto is not none else (r.dividend_forecast if r.dividend_forecast is not none else '―') }}</td>
-      <td><input type="text" name="benefit_value" value="{{ r.benefit_value if r.benefit_value is not none else '' }}" style="width:80px"></td>
-      <td><input type="text" name="benefit_desc" value="{{ r.benefit_desc or '' }}" style="width:110px"></td>
-      <td><input type="date" name="judgment_on" value="{{ r.judgment_on or '' }}"></td>
-      <td><input type="text" name="judgment_note" value="{{ r.judgment_note or '' }}" style="width:260px"></td>
-      <td><input type="checkbox" name="funding_target" {% if r.funding_target %}checked{% endif %}></td>
-      <td><button type="submit" class="sub">保存</button></td>
-      </form>
+      <td class="num" data-v="{{ r.dividend_auto if r.dividend_auto is not none else (r.dividend_forecast or 0) }}">{{ r.dividend_auto if r.dividend_auto is not none else (r.dividend_forecast if r.dividend_forecast is not none else '―') }}</td>
+      <td class="num" data-v="{{ r.benefit_value or 0 }}">{% if r.benefit_value is not none %}{{ r.benefit_value|yen }}{% else %}―{% endif %}</td>
+      <td>{% if r.benefit_desc %}{% if r.benefit_desc|length > 20 %}<span class="memo-tip" data-tip="{{ r.benefit_desc }}">{{ r.benefit_desc[:20] }}…</span>{% else %}{{ r.benefit_desc }}{% endif %}{% endif %}</td>
+      <td>{{ r.judgment_on or '' }}</td>
+      <td>{% if r.judgment_note %}{% if r.judgment_note|length > 20 %}<span class="memo-tip" data-tip="{{ r.judgment_note }}">{{ r.judgment_note[:20] }}…</span>{% else %}{{ r.judgment_note }}{% endif %}{% endif %}</td>
+      <td>{{ '対象' if r.funding_target else '―' }}</td>
+      <td class="nowrap"><button type="button" class="delbtn" style="color:#20304d" data-edit-benefit="{{ r.code }}" data-name="{{ r.name or '' }}">編集</button></td>
     </tr>
   {% endfor %}
   </tbody>
@@ -29,18 +27,144 @@
 </div>
 <script>
   // Updates go through the JSON API (/api/v1), same as external clients.
-  document.querySelectorAll('form[data-code]').forEach(form => {
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const f = new FormData(form);
-      await apiJson('PUT', '/api/v1/dividend-benefits/' + encodeURIComponent(form.dataset.code), {
-        benefit_value: numOrNull(f.get('benefit_value')),
-        benefit_desc: strOrNull(f.get('benefit_desc')),
-        judgment_on: strOrNull(f.get('judgment_on')),
-        judgment_note: strOrNull(f.get('judgment_note')),
-        funding_target: form.querySelector('[name="funding_target"]').checked,
+  const EDITOR = {{ editor|tojson }};
+
+  // Column sorting, same behavior as the other tables.
+  const mtbody = document.querySelector('#master tbody');
+  if (mtbody) {
+    const mrows = Array.from(mtbody.querySelectorAll('tr'));
+    const stripeMaster = () => {
+      let i = 0;
+      Array.from(mtbody.querySelectorAll('tr')).forEach(r => {
+        r.classList.toggle('alt', i % 2 === 1);
+        i++;
       });
-      location.reload();
+    };
+    document.querySelectorAll('#master th.sortable').forEach((th, idx) => {
+      th.addEventListener('click', () => {
+        const type = th.dataset.type;
+        const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+        document.querySelectorAll('#master th').forEach(h => delete h.dataset.dir);
+        th.dataset.dir = dir;
+        const sorted = mrows.slice().sort((a, b) => {
+          const ca = a.children[idx], cb = b.children[idx];
+          let va, vb;
+          if (type === 'num') { va = parseFloat(ca.dataset.v || 0); vb = parseFloat(cb.dataset.v || 0); }
+          else { va = ca.textContent.trim(); vb = cb.textContent.trim(); }
+          const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+          return dir === 'asc' ? cmp : -cmp;
+        });
+        sorted.forEach(r => mtbody.appendChild(r));
+        th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (dir === 'asc' ? ' ▲' : ' ▼');
+        stripeMaster();
+      });
+    });
+  }
+
+  // Editor dialog for the hand-maintained fields (same modal shell
+  // as showDialog, with form fields).
+  function openBenefitEditor(code, name) {
+    const cur = EDITOR[code] || {};
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.className = 'dlg-overlay';
+      const dlg = document.createElement('div');
+      dlg.className = 'dlg';
+      dlg.setAttribute('role', 'dialog');
+      dlg.setAttribute('aria-modal', 'true');
+      const t = document.createElement('div');
+      t.className = 'dlg-title';
+      t.textContent = code + ' ' + (name || '') + ' の編集';
+      const form = document.createElement('div');
+      form.className = 'addform';
+      form.style.display = 'grid';
+      form.style.gap = '10px';
+      const mkLabel = (text) => {
+        const lab = document.createElement('label');
+        lab.textContent = text;
+        return lab;
+      };
+      const valueLabel = mkLabel('優待体感額（円）');
+      const valueInput = document.createElement('input');
+      valueInput.type = 'number';
+      valueInput.min = '0';
+      valueInput.step = 'any';
+      if (cur.benefit_value != null) valueInput.value = cur.benefit_value;
+      valueLabel.appendChild(valueInput);
+      const descLabel = mkLabel('優待内容');
+      const descInput = document.createElement('input');
+      descInput.type = 'text';
+      descInput.style.width = '100%';
+      descInput.value = cur.benefit_desc || '';
+      descLabel.appendChild(descInput);
+      const onLabel = mkLabel('判断日');
+      const onInput = document.createElement('input');
+      onInput.type = 'date';
+      onInput.value = cur.judgment_on || '';
+      onLabel.appendChild(onInput);
+      const noteLabel = mkLabel('判断メモ');
+      const noteArea = document.createElement('textarea');
+      noteArea.rows = 3;
+      noteArea.style.width = '100%';
+      noteArea.value = cur.judgment_note || '';
+      noteLabel.appendChild(noteArea);
+      const fundLabel = document.createElement('label');
+      fundLabel.style.fontWeight = '400';
+      const fundCheck = document.createElement('input');
+      fundCheck.type = 'checkbox';
+      fundCheck.checked = !!cur.funding_target;
+      fundLabel.append(fundCheck, document.createTextNode(' 資金化対象'));
+      form.append(valueLabel, descLabel, onLabel, noteLabel, fundLabel);
+      const btns = document.createElement('div');
+      btns.className = 'dlg-btns';
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'dlg-cancel';
+      cancel.textContent = 'キャンセル';
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.textContent = '保存';
+      const close = (val) => {
+        overlay.classList.remove('show');
+        setTimeout(() => overlay.remove(), 150);
+        resolve(val);
+      };
+      cancel.addEventListener('click', () => close(null));
+      save.addEventListener('click', () => {
+        const vv = valueInput.value.trim();
+        close({
+          benefit_value: vv === '' ? null : Number(vv),
+          benefit_desc: descInput.value.trim() || null,
+          judgment_on: onInput.value || null,
+          judgment_note: noteArea.value.trim() || null,
+          funding_target: fundCheck.checked,
+        });
+      });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
+      btns.append(cancel, save);
+      dlg.append(t, form, btns);
+      overlay.appendChild(dlg);
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('show'));
+    });
+  }
+
+  document.querySelectorAll('[data-edit-benefit]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const code = btn.dataset.editBenefit;
+      const values = await openBenefitEditor(code, btn.dataset.name);
+      if (!values) return;
+      const r = await fetch('/api/v1/dividend-benefits/' + encodeURIComponent(code), {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(values),
+      });
+      if (r.ok) { location.reload(); return; }
+      const d = await r.json().catch(() => ({}));
+      await showDialog({
+        title: '保存できませんでした',
+        message: d.detail || ('エラーが発生しました（' + r.status + '）'),
+      });
     });
   });
 </script>

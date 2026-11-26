@@ -1123,7 +1123,19 @@ def master(request: Request):
             LEFT JOIN stocks s ON s.code = d.code ORDER BY d.code
             """
         ).fetchall()
-    return templates.TemplateResponse(request, "master.html", dict(rows=rows))
+    editor = {
+        r["code"]: dict(
+            benefit_value=fnum(r["benefit_value"]),
+            benefit_desc=r["benefit_desc"],
+            judgment_on=_date_out(r["judgment_on"]),
+            judgment_note=r["judgment_note"],
+            funding_target=bool(r["funding_target"]),
+        )
+        for r in rows
+    }
+    return templates.TemplateResponse(
+        request, "master.html", dict(rows=rows, editor=editor)
+    )
 
 
 @app.get("/settings", response_class=HTMLResponse)
