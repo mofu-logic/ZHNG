@@ -45,3 +45,34 @@ def test_sidebar_layout(client, db):
     assert bottom > top
     for label in ("設定", "データ更新", "ログ"):
         assert page.index(label) > bottom
+
+
+def test_master_policy_roundtrip_and_dashboard_precedence(client, db):
+    seed_stock_holding(db)
+    # The lot says 値上がり; the master does not set a policy yet, so
+    # the dashboard falls back to the lot value.
+    db.execute(
+        "INSERT INTO buy_lots(code, name, avg_price, shares,"
+        " purchase_date, policy, status)"
+        " VALUES ('9999', 'テスト銘柄', 800, 100, '2026-01-01',"
+        " '値上がり', '約定済')"
+    )
+    db.commit()
+    assert 'data-policy="値上がり"' in client.get("/").text
+    # Setting the policy on the master makes it authoritative.
+    r = client.put(
+        "/api/v1/dividend-benefits/9999",
+        json={"benefit_value": 5000, "policy": "配当・優待"},
+    )
+    assert r.status_code == 200
+    assert r.json()["policy"] == "配当・優待"
+    assert db.execute(
+        "SELECT policy FROM dividend_benefits WHERE code='9999'"
+    ).fetchone()["policy"] == "配当・優待"
+    page = client.get("/").text
+    assert 'data-policy="配当・優待"' in page
+    # The master page shows the column and the checkbox editor parts.
+    master = client.get("/master").text
+    assert ">方針</th>" in master
+    assert "POLICY_PARTS" in master
+    assert "配当・優待" in master

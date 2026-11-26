@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS candidates(
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS policy text;
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS memo text;
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS target_price numeric;
+ALTER TABLE dividend_benefits ADD COLUMN IF NOT EXISTS policy text;
 """
 
 
@@ -509,6 +510,29 @@ async def scheduler():
 async def lifespan(app):
     with db() as conn:
         conn.execute(SCHEMA)
+        # One-time migration: the per-stock policy used to be derived
+        # from the buy lots on every read; it now lives on the dividend
+        # master, where it is edited. Seed it once from the latest lot
+        # (verified to match the derived value for every held code).
+        flag = conn.execute(
+            "SELECT value FROM settings"
+            " WHERE key = 'policy_master_migrated'"
+        ).fetchone()
+        if flag is None:
+            conn.execute(
+                "UPDATE dividend_benefits m SET policy = ("
+                " SELECT b.policy FROM buy_lots b WHERE b.code = m.code"
+                "  AND b.policy IS NOT NULL AND b.policy <> ''"
+                "  ORDER BY b.purchase_date DESC NULLS LAST, b.id DESC"
+                "  LIMIT 1)"
+                " WHERE m.policy IS NULL"
+            )
+            conn.execute(
+                "INSERT INTO settings(key, value)"
+                " VALUES ('policy_master_migrated', '1')"
+                " ON CONFLICT(key) DO NOTHING"
+            )
+            conn.commit()
         # No fetch can be running right after process start, so any run
         # still marked unfinished is stale (interrupted by a restart, or
         # its completion update was lost). Close it so the history never
@@ -629,9 +653,10 @@ def dashboard(request: Request):
                    s.name, s.market,
                    d.dividend_forecast, d.benefit_value, d.judgment_note,
                    l.price AS cur_price, l.captured_at AS price_at,
-                   (SELECT policy FROM buy_lots b WHERE b.code = h.code
-                    ORDER BY (b.avg_price = h.avg_price AND b.shares = h.shares) DESC,
-                             b.purchase_date DESC NULLS LAST, b.id DESC LIMIT 1) AS policy,
+                   COALESCE(d.policy,
+                     (SELECT policy FROM buy_lots b WHERE b.code = h.code
+                      ORDER BY (b.avg_price = h.avg_price AND b.shares = h.shares) DESC,
+                               b.purchase_date DESC NULLS LAST, b.id DESC LIMIT 1)) AS policy,
                    (SELECT purchase_date FROM buy_lots b WHERE b.code = h.code
                     ORDER BY (b.avg_price = h.avg_price AND b.shares = h.shares) DESC,
                              b.purchase_date DESC NULLS LAST, b.id DESC LIMIT 1) AS purchase_date
@@ -1014,17 +1039,18 @@ def candidates_at_target(conn):
 
 
 def update_benefit(conn, code, *, benefit_value, benefit_desc, judgment_on,
-                   judgment_note, funding_target):
+                   judgment_note, funding_target, policy=None):
     cur = conn.execute(
         "UPDATE dividend_benefits SET benefit_value=%s,"
         " benefit_desc=%s, judgment_on=%s, judgment_note=%s, funding_target=%s,"
-        " info_updated_on=%s WHERE code=%s",
+        " policy=%s, info_updated_on=%s WHERE code=%s",
         (
             benefit_value,
             benefit_desc,
             judgment_on,
             judgment_note,
             True if funding_target else None,
+            policy,
             datetime.now(JST).date(),
             code,
         ),
@@ -1144,6 +1170,7 @@ def master(request: Request):
             judgment_on=_date_out(r["judgment_on"]),
             judgment_note=r["judgment_note"],
             funding_target=bool(r["funding_target"]),
+            policy=r["policy"],
         )
         for r in rows
     }
@@ -1204,6 +1231,7 @@ def _benefit_out(r):
         funding_target=r["funding_target"],
         judgment_on=_date_out(r["judgment_on"]),
         judgment_note=r["judgment_note"],
+        policy=r["policy"],
     )
 
 
@@ -1241,6 +1269,7 @@ class BenefitIn(BaseModel):
     judgment_on: date | None = None
     judgment_note: str | None = None
     funding_target: bool | None = None
+    policy: str | None = None
 
 
 class SettingsIn(BaseModel):
@@ -1296,6 +1325,7 @@ class BenefitOut(BaseModel):
     funding_target: bool | None
     judgment_on: date | None
     judgment_note: str | None
+    policy: str | None
 
 
 class SettingsOut(BaseModel):
