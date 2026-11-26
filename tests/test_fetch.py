@@ -22,7 +22,7 @@ class FakeResponse:
         self.text = text
 
 
-def make_fake_client(fail_codes=()):
+def make_fake_client(fail_codes=(), empty_codes=(), index_mode="ok"):
     class FakeAsyncClient:
         def __init__(self, headers=None, timeout=None):
             pass
@@ -35,10 +35,18 @@ def make_fake_client(fail_codes=()):
 
         async def get(self, url):
             if "998407" in url:
+                if index_mode == "http404":
+                    return FakeResponse(404, "not found")
+                if index_mode == "noprice":
+                    return FakeResponse(200, "<html><body></body></html>")
                 return FakeResponse(200, INDEX_PAGE)
             for code in fail_codes:
                 if f"/{code}." in url:
                     return FakeResponse(404, "not found")
+            for code in empty_codes:
+                if f"/{code}." in url:
+                    # 200 but no price board: the parse yields no price.
+                    return FakeResponse(200, "<html><body></body></html>")
             return FakeResponse(200, JP_PAGE)
 
     return FakeAsyncClient
@@ -52,8 +60,10 @@ def fake_fetch(monkeypatch):
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
     main._fetch_lock = asyncio.Lock()
 
-    def install(fail_codes=()):
-        monkeypatch.setattr(main.httpx, "AsyncClient", make_fake_client(fail_codes))
+    def install(**kwargs):
+        monkeypatch.setattr(
+            main.httpx, "AsyncClient", make_fake_client(**kwargs)
+        )
 
     return install
 
@@ -128,6 +138,47 @@ def test_fetch_all_partial_failure(db, fake_fetch):
     assert run["ok_count"] == 1
     assert run["ng_count"] == 1
     assert "HTTP 404" in run["note"]  # first error is kept on the run
+
+
+def test_fetch_all_price_not_found_in_page(db, fake_fetch):
+    _seed_two_stocks(db)
+    fake_fetch(empty_codes=("8888",))
+    asyncio.run(main.fetch_all("batch"))
+
+    run = db.execute("SELECT * FROM fetch_runs").fetchone()
+    assert run["ok_count"] == 1
+    assert run["ng_count"] == 1
+    assert "price not found in page" in run["note"]
+
+
+@pytest.mark.parametrize("index_mode", ["http404", "noprice"])
+def test_fetch_all_nikkei_failure_does_not_affect_stocks(
+    db, fake_fetch, index_mode
+):
+    _seed_two_stocks(db)
+    fake_fetch(index_mode=index_mode)
+    asyncio.run(main.fetch_all("batch"))
+
+    run = db.execute("SELECT * FROM fetch_runs").fetchone()
+    assert run["finished_at"] is not None
+    assert run["ok_count"] == 2
+    assert run["ng_count"] == 0
+    codes = db.execute(
+        "SELECT code FROM daily_snapshots ORDER BY code"
+    ).fetchall()
+    assert [c["code"] for c in codes] == ["8888", "9999"]  # no N225 row
+
+
+def test_fetch_now_endpoint_schedules_manual_fetch(client, monkeypatch):
+    calls = []
+
+    async def fake_fetch_all(note="manual"):
+        calls.append(note)
+
+    monkeypatch.setattr(main, "fetch_all", fake_fetch_all)
+    r = client.post("/fetch", follow_redirects=False)
+    assert r.status_code == 303
+    assert calls == ["manual"]
 
 
 def test_fetch_all_skips_when_locked(db, fake_fetch):

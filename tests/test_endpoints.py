@@ -258,6 +258,66 @@ def test_fetch_status_no_runs(client, db):
     assert r.json() == {"running": False}
 
 
+def test_summary_single_snapshot_fallbacks(client, db):
+    # Only one snapshot date so far: the old dividend yield is expressed
+    # at the latest price, and movers fall back to each snapshot's own
+    # prev_close.
+    seed_stock_holding(db)
+    run_id = db.execute(
+        "INSERT INTO fetch_runs(started_at, finished_at, ok_count, ng_count,"
+        " note, total_count, done_count) VALUES (now(), now(), 1, 0,"
+        " 'batch', 1, 1) RETURNING id"
+    ).fetchone()["id"]
+    db.execute(
+        "INSERT INTO daily_snapshots(code, snap_date, close_price,"
+        " prev_close, dividend_yield)"
+        " VALUES ('9999', '2026-11-25', 1000, 900, 5.0)"
+    )
+    db.execute(
+        "INSERT INTO dividend_changes(run_id, code, old_div, new_div)"
+        " VALUES (%s, '9999', 40, 50)",
+        (run_id,),
+    )
+    db.commit()
+    r = client.get("/summary")
+    assert r.status_code == 200
+    assert "4.00% → 5.00%" in r.text  # 40 / 1,000 at the latest price
+    assert "+11.11%" in r.text  # mover vs own prev_close
+
+
+def test_summary_change_without_any_price(client, db):
+    # A dividend change whose snapshot carries neither a yield nor a
+    # close price: both yields render as placeholders.
+    seed_stock_holding(db)
+    run_id = db.execute(
+        "INSERT INTO fetch_runs(started_at, finished_at, ok_count, ng_count,"
+        " note, total_count, done_count) VALUES (now(), now(), 1, 0,"
+        " 'batch', 1, 1) RETURNING id"
+    ).fetchone()["id"]
+    db.execute(
+        "INSERT INTO daily_snapshots(code, snap_date)"
+        " VALUES ('9999', '2026-11-25')"
+    )
+    db.execute(
+        "INSERT INTO dividend_changes(run_id, code, old_div, new_div)"
+        " VALUES (%s, '9999', 40, 50)",
+        (run_id,),
+    )
+    db.commit()
+    r = client.get("/summary")
+    assert r.status_code == 200
+    assert "― → ―" in r.text
+
+
+def test_summary_falls_back_to_latest_finished_run(client, db):
+    # No finished batch run yet: the page uses the latest finished run
+    # of any kind instead of failing.
+    _insert_run(db, ok_count=5, ng_count=0, note="manual",
+                total_count=5, done_count=5)
+    r = client.get("/summary")
+    assert r.status_code == 200
+
+
 def test_summary_page(client, db):
     seed_settings(db)
     seed_stock_holding(db)
