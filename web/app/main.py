@@ -981,24 +981,6 @@ def update_candidate(conn, code, *, policy, memo, target_price):
     return cur.rowcount > 0
 
 
-def candidate_policies(conn):
-    """The policy values offered for candidates: the same set the
-    holdings filter lists (each holding's current lot policy)."""
-    rows = conn.execute(
-        """
-        SELECT DISTINCT policy FROM (
-            SELECT (SELECT policy FROM buy_lots b WHERE b.code = h.code
-                    ORDER BY (b.avg_price = h.avg_price
-                              AND b.shares = h.shares) DESC,
-                             b.purchase_date DESC NULLS LAST, b.id DESC
-                    LIMIT 1) AS policy
-            FROM holdings h
-        ) t WHERE policy IS NOT NULL AND policy <> '' ORDER BY policy
-        """
-    ).fetchall()
-    return [r["policy"] for r in rows]
-
-
 def candidates_at_target(conn):
     """Candidates whose latest close has reached their target price."""
     return conn.execute(
@@ -1483,7 +1465,6 @@ class CandidateUpdateIn(BaseModel):
 def candidates_page(request: Request):
     with db() as conn:
         rows = [_candidate_out(r) for r in list_candidate_rows(conn)]
-        policies = candidate_policies(conn)
     editor = {
         r["code"]: dict(policy=r["policy"], memo=r["memo"],
                         target_price=r["target_price"])
@@ -1491,7 +1472,7 @@ def candidates_page(request: Request):
     }
     return templates.TemplateResponse(
         request, "candidates.html",
-        dict(rows=rows, policies=policies, editor=editor),
+        dict(rows=rows, editor=editor),
     )
 
 

@@ -179,12 +179,12 @@ def test_candidate_update_and_target_alert(client, db, monkeypatch):
     client.post("/api/v1/candidates", json={"code": "7777"})  # close 1000
     r = client.put(
         "/api/v1/candidates/7777",
-        json={"policy": "長期保有", "memo": "決算を見る",
+        json={"policy": "配当・優待", "memo": "決算を見る",
               "target_price": 1200},
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["policy"] == "長期保有"
+    assert body["policy"] == "配当・優待"
     assert body["memo"] == "決算を見る"
     assert body["target_price"] == 1200.0
     assert body["reached"] is True  # 1000 <= 1200
@@ -192,7 +192,7 @@ def test_candidate_update_and_target_alert(client, db, monkeypatch):
         "SELECT policy, memo, target_price FROM candidates"
         " WHERE code='7777'"
     ).fetchone()
-    assert row["policy"] == "長期保有" and row["memo"] == "決算を見る"
+    assert row["policy"] == "配当・優待" and row["memo"] == "決算を見る"
     # Reached candidates are surfaced on the summary tab.
     summary = client.get("/summary").text
     assert "希望購入価格に到達した購入候補" in summary
@@ -200,7 +200,7 @@ def test_candidate_update_and_target_alert(client, db, monkeypatch):
     # Raising the bar above the close clears both flags.
     r = client.put(
         "/api/v1/candidates/7777",
-        json={"policy": "長期保有", "memo": None, "target_price": 800},
+        json={"policy": "配当・優待", "memo": None, "target_price": 800},
     )
     assert r.json()["reached"] is False
     assert "希望購入価格に到達した購入候補" not in client.get("/summary").text
@@ -213,18 +213,12 @@ def test_candidate_update_and_target_alert(client, db, monkeypatch):
     ).status_code == 422
 
 
-def test_candidate_page_offers_holding_policies(client, db, monkeypatch):
-    seed_stock_holding(db)
-    db.execute(
-        "INSERT INTO buy_lots(code, name, avg_price, shares,"
-        " purchase_date, policy, status)"
-        " VALUES ('9999', 'テスト銘柄', 800, 100, '2026-01-01',"
-        " '長期保有', '約定済')"
-    )
-    db.commit()
+def test_candidate_page_editor_and_sorting(client, db):
     page = client.get("/candidates").text
-    # tojson escapes non-ASCII; in the browser it decodes back.
-    import json as _json
-
-    assert _json.dumps("長期保有") in page  # editor's policy options
-    assert "1株配当</th>" in page  # shortened column header
+    # The policy editor is three checkboxes.
+    for part in ("値上がり", "配当", "優待"):
+        assert part in page
+    assert "POLICY_PARTS" in page
+    # Sortable columns and the shortened dividend header.
+    assert 'class="sortable num" data-type="num">配当利回り' in page
+    assert "1株配当" in page
