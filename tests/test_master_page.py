@@ -28,3 +28,20 @@ def test_master_page_display(client, db):
     assert 'data-tip="' + LONG_NOTE + '"' in page
     # Funding target renders as text now.
     assert "対象" in page
+
+
+def test_sidebar_layout(client, db):
+    page = client.get("/master").text
+    assert 'id="sidebar"' in page
+    assert 'id="sidebar-toggle"' in page
+    assert 'class="side-bottom"' in page
+    # Main items on top in order, utility items in the bottom group.
+    top = page.index("サマリー")
+    for label in ("保有株一覧", "売買履歴", "配当・優待マスタ", "購入候補"):
+        nxt = page.index(label)
+        assert top < nxt
+        top = nxt
+    bottom = page.index('class="side-bottom"')
+    assert bottom > top
+    for label in ("設定", "データ更新", "ログ"):
+        assert page.index(label) > bottom

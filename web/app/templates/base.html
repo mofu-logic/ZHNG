@@ -7,11 +7,22 @@
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif; color: #1c2330; background: #f6f7f9; font-size: 16px; }
-  header { background: #20304d; color: #fff; padding: 10px 18px; display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap; }
+  header { background: #20304d; color: #fff; padding: 8px 14px; display: flex; gap: 12px; align-items: center; }
   header .logo { font-weight: 700; font-size: 18px; }
-  header nav a { color: #cdd8ea; text-decoration: none; margin-right: 14px; font-size: 15px; }
-  header nav a:hover { color: #fff; text-decoration: underline; }
-  main { max-width: none; margin: 0; padding: 12px 4px 32px; }
+  #sidebar-toggle { background: transparent; border: none; color: #fff; padding: 6px; display: inline-flex; border-radius: 8px; }
+  #sidebar-toggle:hover { background: rgba(255,255,255,.14); }
+  #sidebar-toggle svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
+  .layout { display: flex; align-items: stretch; }
+  #sidebar { width: 216px; flex: none; background: #fff; border-right: 1px solid #dde2ea; padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; height: 100vh; overflow-y: auto; overflow-x: hidden; transition: width .18s ease; }
+  .side-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; color: #1c2330; text-decoration: none; font-size: 15px; white-space: nowrap; }
+  .side-item:hover { background: #eef1f6; }
+  .side-item.active { background: #e8eff7; color: #20304d; font-weight: 700; }
+  .side-item svg { flex: none; width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .side-bottom { margin-top: auto; border-top: 1px solid #edf0f4; padding-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+  html.sb-collapsed #sidebar { width: 58px; padding: 10px 6px; }
+  html.sb-collapsed .side-item { justify-content: center; padding: 9px 0; }
+  html.sb-collapsed .side-item .side-label { display: none; }
+  main { flex: 1; min-width: 0; margin: 0; padding: 12px 14px 32px; }
   h2 { font-size: 18px; margin: 20px 0 8px; }
   .sub { color: #5b6575; font-size: 13.5px; }
   .kpis { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 16px; }
@@ -72,23 +83,51 @@
 </style>
 </head>
 <body>
+<script>
+  // Restore the sidebar state before first paint (no flash). Narrow
+  // screens start collapsed unless the user chose otherwise.
+  try {
+    const saved = localStorage.getItem('sb-collapsed');
+    if (saved === '1' || (saved === null && window.innerWidth < 760)) {
+      document.documentElement.classList.add('sb-collapsed');
+    }
+  } catch (e) {}
+</script>
 <header>
+  <button id="sidebar-toggle" type="button" aria-label="サイドメニューの表示切り替え" title="サイドメニューの表示切り替え"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
   <div class="logo">株式ポートフォリオ</div>
-  <nav>
-    <a href="/summary">サマリー</a>
-    <a href="/">保有株一覧</a>
-    <a href="/history">売買履歴</a>
-    <a href="/master">配当・優待マスタ</a>
-    <a href="/candidates">購入候補</a>
-    <a href="/settings">設定</a>
-    <a href="/data">データ更新</a>
-    <a href="/logs">ログ</a>
-  </nav>
 </header>
+<div class="layout">
+<nav id="sidebar">
+  <a class="side-item" href="/summary" title="サマリー"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="5" rx="1"/><rect x="13" y="10" width="8" height="11" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/></svg><span class="side-label">サマリー</span></a>
+  <a class="side-item" href="/" title="保有株一覧"><svg viewBox="0 0 24 24"><path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg><span class="side-label">保有株一覧</span></a>
+  <a class="side-item" href="/history" title="売買履歴"><svg viewBox="0 0 24 24"><path d="M3 8h14M13 4l4 4-4 4M21 16H7M11 12l-4 4 4 4"/></svg><span class="side-label">売買履歴</span></a>
+  <a class="side-item" href="/master" title="配当・優待マスタ"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="4"/><path d="M5 12v9h14v-9M12 8v13M12 8s-4.5 0-4.5-2.6C7.5 3 12 3.4 12 8zM12 8s4.5 0 4.5-2.6C16.5 3 12 3.4 12 8z"/></svg><span class="side-label">配当・優待マスタ</span></a>
+  <a class="side-item" href="/candidates" title="購入候補"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4.5L6 21z"/></svg><span class="side-label">購入候補</span></a>
+  <div class="side-bottom">
+    <a class="side-item" href="/settings" title="設定"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="side-label">設定</span></a>
+    <a class="side-item" href="/data" title="データ更新"><svg viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg><span class="side-label">データ更新</span></a>
+    <a class="side-item" href="/logs" title="ログ"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg><span class="side-label">ログ</span></a>
+  </div>
+</nav>
 <main>
 {% block content %}{% endblock %}
 </main>
+</div>
 <script>
+  // Sidebar: hamburger toggles icon+label / icon-only (persisted),
+  // and the current page is highlighted.
+  const sbToggle = document.getElementById('sidebar-toggle');
+  if (sbToggle) {
+    sbToggle.addEventListener('click', () => {
+      const collapsed = document.documentElement.classList.toggle('sb-collapsed');
+      try { localStorage.setItem('sb-collapsed', collapsed ? '1' : '0'); } catch (e) {}
+    });
+  }
+  document.querySelectorAll('#sidebar .side-item').forEach(a => {
+    if (a.getAttribute('href') === location.pathname) a.classList.add('active');
+  });
+
   // Shared helpers for the JSON API (/api/v1): the UI and external
   // integrations use the same interface.
   async function apiJson(method, url, obj) {
