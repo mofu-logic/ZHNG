@@ -1,28 +1,11 @@
-"""Form-parsing helpers and the previous-trading-date fallback."""
+"""The previous-trading-date fallback.
+
+(Form-string parsing helpers used to live here; input parsing is now
+Pydantic's job in the /api/v1 models, covered by tests/test_api.py.)
+"""
 from datetime import date
 
-from app.main import _f, _i, _prev_trading_date, _s
-
-
-def test_s():
-    assert _s("  abc ") == "abc"
-    assert _s("") is None
-    assert _s("   ") is None
-    assert _s(None) is None
-
-
-def test_f():
-    assert _f("12.5") == 12.5
-    assert _f("") is None
-    assert _f(None) is None
-    assert _f(" 100 ") == 100.0
-
-
-def test_i():
-    assert _i("100") == 100
-    assert _i("100.9") == 100
-    assert _i("") is None
-    assert _i(None) is None
+from app.main import _prev_trading_date
 
 
 def test_prev_trading_date_prefers_snapshot_date():

@@ -14,15 +14,16 @@ import random
 import re
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import httpx
 import psycopg
-from fastapi import BackgroundTasks, FastAPI, Form, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from psycopg.rows import dict_row
+from pydantic import BaseModel
 
 from app.observability import OtelBridgeHandler, emit_event, setup_observability
 
@@ -456,7 +457,16 @@ async def lifespan(app):
     task.cancel()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    lifespan=lifespan,
+    title="株式ポートフォリオ API",
+    version="1.0.0",
+    description=(
+        "売買履歴・配当優待マスタ・KPI設定の登録／更新／参照を行う "
+        "JSON API（/api/v1）。画面と外部連携で同一の IF を使う。"
+        "このドキュメントは OpenAPI 仕様として /openapi.json でも取得できる。"
+    ),
+)
 
 
 @app.middleware("http")
@@ -731,21 +741,6 @@ def history(request: Request):
     return templates.TemplateResponse(request, "history.html", dict(buys=buys, sales=sales))
 
 
-def _s(v):
-    v = (v or "").strip()
-    return v or None
-
-
-def _f(v):
-    v = _s(v)
-    return float(v) if v else None
-
-
-def _i(v):
-    v = _s(v)
-    return int(float(v)) if v else None
-
-
 def _upsert_stock(conn, code, name):
     if code and name:
         conn.execute(
@@ -755,120 +750,120 @@ def _upsert_stock(conn, code, name):
         )
 
 
-@app.post("/history/buy")
-def buy_create(
-    code: str = Form(""),
-    name: str = Form(""),
-    avg_price: str = Form(""),
-    shares: str = Form(""),
-    purchase_date: str = Form(""),
-    policy: str = Form(""),
-    trigger_note: str = Form(""),
-    note: str = Form(""),
-    status: str = Form("約定済"),
-):
-    code, name = _s(code), _s(name)
-    final_status = status if status in ("注文中", "一部約定", "約定済") else "約定済"
-    with db() as conn:
-        _upsert_stock(conn, code, name)
-        lot_id = conn.execute(
-            "INSERT INTO buy_lots(code, name, avg_price, shares, purchase_date,"
-            " policy, trigger_note, note, status) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)"
-            " RETURNING id",
-            (
-                code,
-                name,
-                _f(avg_price),
-                _i(shares),
-                _s(purchase_date),
-                _s(policy),
-                _s(trigger_note),
-                _s(note),
-                final_status,
-            ),
-        ).fetchone()["id"]
-        conn.commit()
-    emit_event("history.buy_created", id=lot_id, code=code, status=final_status)
-    return RedirectResponse("/history", status_code=303)
+# ---------------------------------------------------------------- services
+# The write/read logic for trades, the dividend/benefit master and the
+# settings lives here, shared by the JSON API (/api/v1) and anything
+# else that needs it. Derivations (trade status, sale profit, monthly
+# income target) exist exactly once, in this layer.
+TRADE_STATUSES = ("注文中", "一部約定", "約定済")
 
 
-@app.post("/history/buy/{lot_id}/delete")
-def buy_delete(lot_id: int):
-    with db() as conn:
-        conn.execute("DELETE FROM buy_lots WHERE id = %s", (lot_id,))
-        conn.commit()
-    emit_event("history.buy_deleted", id=lot_id)
-    return RedirectResponse("/history", status_code=303)
+def create_buy(conn, *, code, name, avg_price, shares, purchase_date,
+               policy, trigger_note, note, status):
+    final_status = status if status in TRADE_STATUSES else "約定済"
+    _upsert_stock(conn, code, name)
+    row = conn.execute(
+        "INSERT INTO buy_lots(code, name, avg_price, shares, purchase_date,"
+        " policy, trigger_note, note, status) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+        " RETURNING *",
+        (code, name, avg_price, shares, purchase_date, policy,
+         trigger_note, note, final_status),
+    ).fetchone()
+    return row
 
 
-@app.post("/history/sell")
-def sell_create(
-    code: str = Form(""),
-    name: str = Form(""),
-    buy_price: str = Form(""),
-    shares: str = Form(""),
-    purchase_date: str = Form(""),
-    sell_price: str = Form(""),
-    sell_shares: str = Form(""),
-    executed_shares: str = Form(""),
-    order_start_date: str = Form(""),
-    executed_date: str = Form(""),
-    profit: str = Form(""),
-    status: str = Form("自動"),
-    memo: str = Form(""),
-):
-    code, name = _s(code), _s(name)
-    bp, sp = _f(buy_price), _f(sell_price)
-    ssh = _i(sell_shares)
-    ex = _i(executed_shares) or 0
-    pf = _f(profit)
-    if pf is None and bp is not None and sp is not None and ex:
-        pf = (sp - bp) * ex
-    if status not in ("注文中", "一部約定", "約定済"):
-        if ssh and ex >= ssh:
+def delete_buy(conn, lot_id):
+    cur = conn.execute("DELETE FROM buy_lots WHERE id = %s", (lot_id,))
+    return cur.rowcount > 0
+
+
+def create_sale(conn, *, code, name, buy_price, shares, purchase_date,
+                sell_price, sell_shares, executed_shares, order_start_date,
+                executed_date, profit, status, memo):
+    ex = executed_shares or 0
+    pf = profit
+    if pf is None and buy_price is not None and sell_price is not None and ex:
+        pf = (sell_price - buy_price) * ex
+    if status not in TRADE_STATUSES:
+        # "自動" (or anything unspecified): derive from executed shares.
+        if sell_shares and ex >= sell_shares:
             status = "約定済"
         elif ex > 0:
             status = "一部約定"
         else:
             status = "注文中"
-    with db() as conn:
-        _upsert_stock(conn, code, name)
-        sale_id = conn.execute(
-            "INSERT INTO sales(code, name, buy_price, shares, purchase_date,"
-            " sell_price, sell_shares, executed_shares, order_start_date,"
-            " executed_date, profit, status, memo)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
-            (
-                code,
-                name,
-                bp,
-                _i(shares),
-                _s(purchase_date),
-                sp,
-                ssh,
-                ex,
-                _s(order_start_date),
-                _s(executed_date),
-                pf,
-                status,
-                _s(memo),
-            ),
-        ).fetchone()["id"]
-        conn.commit()
-    sell_attrs = dict(id=sale_id, code=code, status=status)
-    if pf is not None:
-        sell_attrs["profit"] = float(pf)
-    emit_event("history.sell_created", **sell_attrs)
-    return RedirectResponse("/history#sell", status_code=303)
+    _upsert_stock(conn, code, name)
+    row = conn.execute(
+        "INSERT INTO sales(code, name, buy_price, shares, purchase_date,"
+        " sell_price, sell_shares, executed_shares, order_start_date,"
+        " executed_date, profit, status, memo)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+        (code, name, buy_price, shares, purchase_date, sell_price,
+         sell_shares, ex, order_start_date, executed_date, pf, status, memo),
+    ).fetchone()
+    return row
 
 
-@app.post("/history/sell/{sale_id}/delete")
-def sell_delete(sale_id: int):
-    with db() as conn:
-        conn.execute("DELETE FROM sales WHERE id = %s", (sale_id,))
-        conn.commit()
-    emit_event("history.sell_deleted", id=sale_id)
-    return RedirectResponse("/history#sell", status_code=303)
+def delete_sale(conn, sale_id):
+    cur = conn.execute("DELETE FROM sales WHERE id = %s", (sale_id,))
+    return cur.rowcount > 0
+
+
+def update_benefit(conn, code, *, benefit_value, benefit_desc, judgment_on,
+                   judgment_note, funding_target):
+    cur = conn.execute(
+        "UPDATE dividend_benefits SET benefit_value=%s,"
+        " benefit_desc=%s, judgment_on=%s, judgment_note=%s, funding_target=%s,"
+        " info_updated_on=%s WHERE code=%s",
+        (
+            benefit_value,
+            benefit_desc,
+            judgment_on,
+            judgment_note,
+            True if funding_target else None,
+            datetime.now(JST).date(),
+            code,
+        ),
+    )
+    return cur.rowcount > 0
+
+
+def settings_view(st):
+    """The settings as the UI/API present them (percent units, with the
+    derived monthly target)."""
+    total = st.get("target_dividend_total", 0)
+    tax = st.get("tax_rate", 0.20315)
+    return dict(
+        tax_rate_pct=(tax * 100),
+        target_dividend_total=total,
+        target_monthly_income=round_half_up(total * (1 - tax) / 12),
+        target_yield_buy_pct=(st.get("target_yield_buy", 0) * 100),
+        target_yield_now_pct=(st.get("target_yield_now", 0) * 100),
+        target_yield_value_pct=(st.get("target_yield_value", 0.04) * 100),
+    )
+
+
+def update_settings(conn, *, tax_rate_pct, target_dividend_total,
+                    target_yield_buy_pct, target_yield_now_pct,
+                    target_yield_value_pct):
+    # Monthly after-tax income target is derived, not entered directly:
+    # annual dividend target x (1 - tax rate) / 12.
+    monthly = round_half_up(target_dividend_total * (1 - tax_rate_pct / 100) / 12)
+    values = {
+        "tax_rate": tax_rate_pct / 100,
+        "target_dividend_total": target_dividend_total,
+        "target_monthly_income": float(monthly),
+        "target_yield_buy": target_yield_buy_pct / 100,
+        "target_yield_now": target_yield_now_pct / 100,
+        "target_yield_value": target_yield_value_pct / 100,
+    }
+    for k, v in values.items():
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES (%s, %s)"
+            " ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
+            (k, repr(v)),
+        )
+    return values
 
 
 @app.get("/master", response_class=HTMLResponse)
@@ -883,89 +878,277 @@ def master(request: Request):
     return templates.TemplateResponse(request, "master.html", dict(rows=rows))
 
 
-@app.post("/master/{code}")
-def master_update(
-    code: str,
-    benefit_value: str = Form(""),
-    benefit_desc: str = Form(""),
-    judgment_on: str = Form(""),
-    judgment_note: str = Form(""),
-    funding_target: str = Form(""),
-):
-    def num_or_none(s):
-        s = (s or "").strip()
-        return float(s) if s else None
-
-    def date_or_none(s):
-        s = (s or "").strip()
-        return s or None
-
-    with db() as conn:
-        conn.execute(
-            "UPDATE dividend_benefits SET benefit_value=%s,"
-            " benefit_desc=%s, judgment_on=%s, judgment_note=%s, funding_target=%s,"
-            " info_updated_on=%s WHERE code=%s",
-            (
-                num_or_none(benefit_value),
-                benefit_desc.strip() or None,
-                date_or_none(judgment_on),
-                judgment_note.strip() or None,
-                True if funding_target == "on" else None,
-                datetime.now(JST).date(),
-                code,
-            ),
-        )
-        conn.commit()
-    emit_event("master.updated", code=code)
-    return RedirectResponse("/master", status_code=303)
-
-
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request):
     with db() as conn:
         st = get_settings(conn)
-    total = st.get("target_dividend_total", 0)
-    tax = st.get("tax_rate", 0.20315)
-    view = dict(
-        tax_rate_pct=(tax * 100),
-        target_dividend_total=total,
-        target_monthly_income=round_half_up(total * (1 - tax) / 12),
-        target_yield_buy_pct=(st.get("target_yield_buy", 0) * 100),
-        target_yield_now_pct=(st.get("target_yield_now", 0) * 100),
-        target_yield_value_pct=(st.get("target_yield_value", 0.04) * 100),
+    return templates.TemplateResponse(
+        request, "settings.html", settings_view(st)
     )
-    return templates.TemplateResponse(request, "settings.html", view)
 
 
-@app.post("/settings")
-def settings_update(
-    tax_rate_pct: float = Form(...),
-    target_dividend_total: float = Form(...),
-    target_yield_buy_pct: float = Form(...),
-    target_yield_now_pct: float = Form(...),
-    target_yield_value_pct: float = Form(...),
-):
-    # Monthly after-tax income target is derived, not entered directly:
-    # annual dividend target x (1 - tax rate) / 12.
-    monthly = round_half_up(target_dividend_total * (1 - tax_rate_pct / 100) / 12)
-    values = {
-        "tax_rate": tax_rate_pct / 100,
-        "target_dividend_total": target_dividend_total,
-        "target_monthly_income": float(monthly),
-        "target_yield_buy": target_yield_buy_pct / 100,
-        "target_yield_now": target_yield_now_pct / 100,
-        "target_yield_value": target_yield_value_pct / 100,
-    }
+# ---------------------------------------------------------------- JSON API
+# /api/v1 is the single interface for trades, the dividend/benefit
+# master and the settings: the web UI uses it, and future external
+# integrations use the same paths and shapes. Writes go through the
+# service layer above, so derivations and log events are identical
+# no matter which client calls.
+
+
+def _date_out(v):
+    return v.isoformat() if v is not None else None
+
+
+def _buy_out(r):
+    return dict(
+        id=r["id"], code=r["code"], name=r["name"],
+        avg_price=fnum(r["avg_price"]), shares=r["shares"],
+        purchase_date=_date_out(r["purchase_date"]), policy=r["policy"],
+        trigger_note=r["trigger_note"], note=r["note"], status=r["status"],
+    )
+
+
+def _sale_out(r):
+    return dict(
+        id=r["id"], code=r["code"], name=r["name"],
+        buy_price=fnum(r["buy_price"]), shares=r["shares"],
+        purchase_date=_date_out(r["purchase_date"]),
+        sell_price=fnum(r["sell_price"]), sell_shares=r["sell_shares"],
+        executed_shares=r["executed_shares"],
+        order_start_date=_date_out(r["order_start_date"]),
+        executed_date=_date_out(r["executed_date"]),
+        profit=fnum(r["profit"]), status=r["status"], memo=r["memo"],
+    )
+
+
+def _benefit_out(r):
+    return dict(
+        code=r["code"], name=r.get("name"),
+        dividend_forecast=fnum(r["dividend_forecast"]),
+        dividend_auto=fnum(r["dividend_auto"]),
+        benefit_value=fnum(r["benefit_value"]),
+        benefit_desc=r["benefit_desc"],
+        info_updated_on=_date_out(r["info_updated_on"]),
+        funding_target=r["funding_target"],
+        judgment_on=_date_out(r["judgment_on"]),
+        judgment_note=r["judgment_note"],
+    )
+
+
+class BuyIn(BaseModel):
+    code: str | None = None
+    name: str | None = None
+    avg_price: float | None = None
+    shares: int | None = None
+    purchase_date: date | None = None
+    policy: str | None = None
+    trigger_note: str | None = None
+    note: str | None = None
+    status: str | None = None
+
+
+class SaleIn(BaseModel):
+    code: str | None = None
+    name: str | None = None
+    buy_price: float | None = None
+    shares: int | None = None
+    purchase_date: date | None = None
+    sell_price: float | None = None
+    sell_shares: int | None = None
+    executed_shares: int | None = None
+    order_start_date: date | None = None
+    executed_date: date | None = None
+    profit: float | None = None
+    status: str | None = None
+    memo: str | None = None
+
+
+class BenefitIn(BaseModel):
+    benefit_value: float | None = None
+    benefit_desc: str | None = None
+    judgment_on: date | None = None
+    judgment_note: str | None = None
+    funding_target: bool | None = None
+
+
+class SettingsIn(BaseModel):
+    tax_rate_pct: float
+    target_dividend_total: float
+    target_yield_buy_pct: float
+    target_yield_now_pct: float
+    target_yield_value_pct: float
+
+
+class BuyOut(BaseModel):
+    id: int
+    code: str | None
+    name: str | None
+    avg_price: float | None
+    shares: int | None
+    purchase_date: date | None
+    policy: str | None
+    trigger_note: str | None
+    note: str | None
+    status: str
+
+
+class SaleOut(BaseModel):
+    id: int
+    code: str | None
+    name: str | None
+    buy_price: float | None
+    shares: int | None
+    purchase_date: date | None
+    sell_price: float | None
+    sell_shares: int | None
+    executed_shares: int | None
+    order_start_date: date | None
+    executed_date: date | None
+    profit: float | None
+    status: str
+    memo: str | None
+
+
+class BenefitOut(BaseModel):
+    code: str
+    name: str | None
+    dividend_forecast: float | None
+    dividend_auto: float | None
+    benefit_value: float | None
+    benefit_desc: str | None
+    info_updated_on: date | None
+    funding_target: bool | None
+    judgment_on: date | None
+    judgment_note: str | None
+
+
+class SettingsOut(BaseModel):
+    tax_rate_pct: float
+    target_dividend_total: float
+    target_monthly_income: int
+    target_yield_buy_pct: float
+    target_yield_now_pct: float
+    target_yield_value_pct: float
+
+
+@app.get("/api/v1/buys", response_model=list[BuyOut], tags=["buys"])
+def api_buys_list():
     with db() as conn:
-        for k, v in values.items():
-            conn.execute(
-                "INSERT INTO settings(key, value) VALUES (%s, %s)"
-                " ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
-                (k, repr(v)),
+        rows = conn.execute(
+            "SELECT * FROM buy_lots ORDER BY purchase_date DESC NULLS LAST, id DESC"
+        ).fetchall()
+    return [_buy_out(r) for r in rows]
+
+
+@app.post("/api/v1/buys", status_code=201, response_model=BuyOut, tags=["buys"])
+def api_buys_create(payload: BuyIn):
+    with db() as conn:
+        row = create_buy(conn, **payload.model_dump())
+        conn.commit()
+    emit_event("history.buy_created", id=row["id"], code=row["code"],
+               status=row["status"])
+    return _buy_out(row)
+
+
+@app.delete("/api/v1/buys/{lot_id}", status_code=204, tags=["buys"])
+def api_buys_delete(lot_id: int):
+    with db() as conn:
+        deleted = delete_buy(conn, lot_id)
+        conn.commit()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="buy lot not found")
+    emit_event("history.buy_deleted", id=lot_id)
+    return None
+
+
+@app.get("/api/v1/sales", response_model=list[SaleOut], tags=["sales"])
+def api_sales_list():
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sales ORDER BY order_start_date DESC NULLS LAST, id DESC"
+        ).fetchall()
+    return [_sale_out(r) for r in rows]
+
+
+@app.post("/api/v1/sales", status_code=201, response_model=SaleOut, tags=["sales"])
+def api_sales_create(payload: SaleIn):
+    with db() as conn:
+        row = create_sale(conn, **payload.model_dump())
+        conn.commit()
+    attrs = dict(id=row["id"], code=row["code"], status=row["status"])
+    if row["profit"] is not None:
+        attrs["profit"] = float(row["profit"])
+    emit_event("history.sell_created", **attrs)
+    return _sale_out(row)
+
+
+@app.delete("/api/v1/sales/{sale_id}", status_code=204, tags=["sales"])
+def api_sales_delete(sale_id: int):
+    with db() as conn:
+        deleted = delete_sale(conn, sale_id)
+        conn.commit()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="sale not found")
+    emit_event("history.sell_deleted", id=sale_id)
+    return None
+
+
+@app.get("/api/v1/dividend-benefits", response_model=list[BenefitOut], tags=["dividend-benefits"])
+def api_benefits_list():
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT d.*, s.name FROM dividend_benefits d"
+            " LEFT JOIN stocks s ON s.code = d.code ORDER BY d.code"
+        ).fetchall()
+    return [_benefit_out(r) for r in rows]
+
+
+@app.get("/api/v1/dividend-benefits/{code}", response_model=BenefitOut, tags=["dividend-benefits"])
+def api_benefits_get(code: str):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT d.*, s.name FROM dividend_benefits d"
+            " LEFT JOIN stocks s ON s.code = d.code WHERE d.code = %s",
+            (code,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="dividend benefit not found")
+    return _benefit_out(row)
+
+
+@app.put("/api/v1/dividend-benefits/{code}", response_model=BenefitOut, tags=["dividend-benefits"])
+def api_benefits_update(code: str, payload: BenefitIn):
+    with db() as conn:
+        updated = update_benefit(conn, code, **payload.model_dump())
+        if not updated:
+            raise HTTPException(
+                status_code=404, detail="dividend benefit not found"
             )
         conn.commit()
+        row = conn.execute(
+            "SELECT d.*, s.name FROM dividend_benefits d"
+            " LEFT JOIN stocks s ON s.code = d.code WHERE d.code = %s",
+            (code,),
+        ).fetchone()
+    emit_event("master.updated", code=code)
+    return _benefit_out(row)
+
+
+@app.get("/api/v1/settings", response_model=SettingsOut, tags=["settings"])
+def api_settings_get():
+    with db() as conn:
+        st = get_settings(conn)
+    return settings_view(st)
+
+
+@app.put("/api/v1/settings", response_model=SettingsOut, tags=["settings"])
+def api_settings_update(payload: SettingsIn):
+    with db() as conn:
+        values = update_settings(conn, **payload.model_dump())
+        conn.commit()
+        st = get_settings(conn)
     emit_event("settings.updated", **values)
-    return RedirectResponse("/settings", status_code=303)
+    return settings_view(st)
 
 
 @app.get("/data", response_class=HTMLResponse)

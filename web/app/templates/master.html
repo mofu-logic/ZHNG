@@ -11,7 +11,7 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <form method="post" action="/master/{{ r.code }}">
+      <form data-code="{{ r.code }}">
       <td class="code">{{ r.code }}<br><span class="code">更新 {{ r.info_updated_on or '―' }}</span></td>
       <td><span class="name">{{ r.name or '' }}</span></td>
       <td class="num">{{ r.dividend_auto if r.dividend_auto is not none else (r.dividend_forecast if r.dividend_forecast is not none else '―') }}</td>
@@ -27,4 +27,21 @@
   </tbody>
 </table>
 </div>
+<script>
+  // Updates go through the JSON API (/api/v1), same as external clients.
+  document.querySelectorAll('form[data-code]').forEach(form => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = new FormData(form);
+      await apiJson('PUT', '/api/v1/dividend-benefits/' + encodeURIComponent(form.dataset.code), {
+        benefit_value: numOrNull(f.get('benefit_value')),
+        benefit_desc: strOrNull(f.get('benefit_desc')),
+        judgment_on: strOrNull(f.get('judgment_on')),
+        judgment_note: strOrNull(f.get('judgment_note')),
+        funding_target: form.querySelector('[name="funding_target"]').checked,
+      });
+      location.reload();
+    });
+  });
+</script>
 {% endblock %}

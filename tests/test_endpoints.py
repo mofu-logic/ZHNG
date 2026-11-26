@@ -37,36 +37,36 @@ def test_dashboard_empty(client, db):
 
 def test_history_buy_create_and_delete(client, db):
     r = client.post(
-        "/history/buy",
-        data={
+        "/api/v1/buys",
+        json={
             "code": "9999",
             "name": "テスト銘柄",
-            "avg_price": "900",
-            "shares": "50",
+            "avg_price": 900,
+            "shares": 50,
             "purchase_date": "2026-11-20",
             "status": "一部約定",
         },
-        follow_redirects=False,
     )
-    assert r.status_code == 303
+    assert r.status_code == 201
+    body = r.json()
+    assert body["code"] == "9999"
+    assert body["status"] == "一部約定"
+    assert body["avg_price"] == 900.0
     row = db.execute("SELECT * FROM buy_lots").fetchone()
     assert row["code"] == "9999"
-    assert row["status"] == "一部約定"
-    assert float(row["avg_price"]) == 900.0
 
-    r = client.post(f"/history/buy/{row['id']}/delete", follow_redirects=False)
-    assert r.status_code == 303
+    assert client.delete(f"/api/v1/buys/{body['id']}").status_code == 204
+    assert client.delete(f"/api/v1/buys/{body['id']}").status_code == 404
     assert db.execute("SELECT count(*) c FROM buy_lots").fetchone()["c"] == 0
 
 
 def test_history_buy_invalid_status_falls_back(client, db):
-    client.post(
-        "/history/buy",
-        data={"code": "9999", "name": "x", "status": "変な値"},
-        follow_redirects=False,
+    r = client.post(
+        "/api/v1/buys",
+        json={"code": "9999", "name": "x", "status": "変な値"},
     )
-    row = db.execute("SELECT status FROM buy_lots").fetchone()
-    assert row["status"] == "約定済"
+    assert r.status_code == 201
+    assert r.json()["status"] == "約定済"
 
 
 @pytest.mark.parametrize(
@@ -81,66 +81,56 @@ def test_history_buy_invalid_status_falls_back(client, db):
 def test_sell_auto_status_and_profit(
     client, db, executed, expected_status, expected_profit
 ):
-    client.post(
-        "/history/sell",
-        data={
+    r = client.post(
+        "/api/v1/sales",
+        json={
             "code": "9999",
             "name": "テスト銘柄",
-            "buy_price": "100",
-            "sell_price": "200",
-            "sell_shares": "100",
-            "executed_shares": str(executed),
+            "buy_price": 100,
+            "sell_price": 200,
+            "sell_shares": 100,
+            "executed_shares": executed,
             "status": "自動",
         },
-        follow_redirects=False,
     )
-    row = db.execute("SELECT * FROM sales").fetchone()
-    assert row["status"] == expected_status
-    if expected_profit is None:
-        assert row["profit"] is None
-    else:
-        assert float(row["profit"]) == expected_profit
+    assert r.status_code == 201
+    body = r.json()
+    assert body["status"] == expected_status
+    assert body["profit"] == expected_profit
+    client.delete(f"/api/v1/sales/{body['id']}")
 
 
 def test_sell_explicit_profit_and_status_win(client, db):
-    client.post(
-        "/history/sell",
-        data={
+    r = client.post(
+        "/api/v1/sales",
+        json={
             "code": "9999",
             "name": "テスト銘柄",
-            "buy_price": "100",
-            "sell_price": "200",
-            "sell_shares": "100",
-            "executed_shares": "0",
-            "profit": "1234",
+            "buy_price": 100,
+            "sell_price": 200,
+            "sell_shares": 100,
+            "executed_shares": 0,
+            "profit": 1234,
             "status": "約定済",
         },
-        follow_redirects=False,
     )
-    row = db.execute("SELECT * FROM sales").fetchone()
-    assert float(row["profit"]) == 1234.0
-    assert row["status"] == "約定済"
+    body = r.json()
+    assert body["profit"] == 1234.0
+    assert body["status"] == "約定済"
+    client.delete(f"/api/v1/sales/{body['id']}")
 
 
 def test_sell_delete(client, db):
-    client.post(
-        "/history/sell",
-        data={"code": "9999", "name": "x"},
-        follow_redirects=False,
-    )
-    row = db.execute("SELECT id FROM sales").fetchone()
-    r = client.post(f"/history/sell/{row['id']}/delete", follow_redirects=False)
-    assert r.status_code == 303
+    r = client.post("/api/v1/sales", json={"code": "9999", "name": "x"})
+    sale_id = r.json()["id"]
+    assert client.delete(f"/api/v1/sales/{sale_id}").status_code == 204
+    assert client.delete(f"/api/v1/sales/{sale_id}").status_code == 404
     assert db.execute("SELECT count(*) c FROM sales").fetchone()["c"] == 0
 
 
 def test_history_page_renders(client, db):
     seed_stock_holding(db, dividend=None, price=None)
-    client.post(
-        "/history/buy",
-        data={"code": "9999", "name": "テスト銘柄"},
-        follow_redirects=False,
-    )
+    client.post("/api/v1/buys", json={"code": "9999", "name": "テスト銘柄"})
     r = client.get("/history")
     assert r.status_code == 200
     assert "テスト銘柄" in r.text
@@ -148,27 +138,28 @@ def test_history_page_renders(client, db):
 
 def test_settings_monthly_target_is_derived(client, db):
     # annual 1,200,000 x (1 - 0.20315) / 12 = 79,685 exactly at seed values;
-    # post new numbers and check the stored derivation.
-    r = client.post(
-        "/settings",
-        data={
-            "tax_rate_pct": "20.315",
-            "target_dividend_total": "1370347",
-            "target_yield_buy_pct": "3.0",
-            "target_yield_now_pct": "3.5",
-            "target_yield_value_pct": "4.0",
+    # put new numbers and check the stored derivation.
+    r = client.put(
+        "/api/v1/settings",
+        json={
+            "tax_rate_pct": 20.315,
+            "target_dividend_total": 1370347,
+            "target_yield_buy_pct": 3.0,
+            "target_yield_now_pct": 3.5,
+            "target_yield_value_pct": 4.0,
         },
-        follow_redirects=False,
     )
-    assert r.status_code == 303
+    assert r.status_code == 200
+    # 1,370,347 x (1 - 0.20315) / 12 = 90,996.79... -> round half up
+    assert r.json()["target_monthly_income"] == 90997
     rows = {
         row["key"]: float(row["value"])
         for row in db.execute("SELECT key, value FROM settings").fetchall()
     }
-    # 1,370,347 x (1 - 0.20315) / 12 = 90,996.79... -> round half up
     assert rows["target_monthly_income"] == 90997.0
     assert rows["tax_rate"] == pytest.approx(0.20315)
     assert rows["target_yield_value"] == pytest.approx(0.04)
+    assert client.get("/api/v1/settings").json()["target_monthly_income"] == 90997
 
 
 def test_settings_page_renders(client, db):
@@ -180,27 +171,31 @@ def test_settings_page_renders(client, db):
 
 def test_master_update(client, db):
     seed_stock_holding(db)
-    r = client.post(
-        "/master/9999",
-        data={
-            "benefit_value": "6000",
+    r = client.put(
+        "/api/v1/dividend-benefits/9999",
+        json={
+            "benefit_value": 6000,
             "benefit_desc": "食事券",
             "judgment_on": "2026-11-26",
             "judgment_note": "継続保有",
-            "funding_target": "on",
+            "funding_target": True,
         },
-        follow_redirects=False,
     )
-    assert r.status_code == 303
+    assert r.status_code == 200
+    body = r.json()
+    assert body["benefit_value"] == 6000.0
+    assert body["benefit_desc"] == "食事券"
+    assert body["judgment_on"] == "2026-11-26"
+    assert body["funding_target"] is True
     row = db.execute(
         "SELECT * FROM dividend_benefits WHERE code = '9999'"
     ).fetchone()
     assert float(row["benefit_value"]) == 6000.0
-    assert row["benefit_desc"] == "食事券"
     assert row["judgment_note"] == "継続保有"
-    assert row["funding_target"] is True
-    # dividend itself is auto-fetched only; the form must not touch it
+    # dividend itself is auto-fetched only; the API must not touch it
     assert float(row["dividend_forecast"]) == 40.0
+    r = client.put("/api/v1/dividend-benefits/0000", json={"benefit_value": 1})
+    assert r.status_code == 404
 
 
 def test_master_page_renders(client, db):

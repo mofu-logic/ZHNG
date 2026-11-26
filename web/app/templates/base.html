@@ -75,6 +75,21 @@
 {% block content %}{% endblock %}
 </main>
 <script>
+  // Shared helpers for the JSON API (/api/v1): the UI and external
+  // integrations use the same interface.
+  async function apiJson(method, url, obj) {
+    const r = await fetch(url, {
+      method,
+      headers: {'Content-Type': 'application/json'},
+      body: obj === undefined ? undefined : JSON.stringify(obj),
+    });
+    if (!r.ok) { alert('保存に失敗しました（' + r.status + '）'); throw new Error('api ' + r.status); }
+    return r.status === 204 ? null : r.json();
+  }
+  function strOrNull(v) { v = (v || '').trim(); return v === '' ? null : v; }
+  function numOrNull(v) { return v === '' || v == null ? null : Number(v); }
+  function intOrNull(v) { return v === '' || v == null ? null : parseInt(v, 10); }
+
   // Visible-row striping for static tables (dashboard does its own after filter/sort)
   document.querySelectorAll('tbody').forEach(tb => {
     if (tb.closest('#holdings')) return;

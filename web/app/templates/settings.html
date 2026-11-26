@@ -2,7 +2,7 @@
 {% block content %}
 <h2>KPI設定</h2>
 <div class="sub">ダッシュボードのKPIに使う税率と目標値です。保存すると即座にダッシュボードへ反映されます。</div>
-<form method="post" action="/settings" style="margin-top:14px; max-width:520px">
+<form id="settings-form" style="margin-top:14px; max-width:520px">
   <table>
     <tbody>
       <tr>
@@ -34,6 +34,20 @@
   <div style="margin-top:14px"><button type="submit">保存する</button></div>
 </form>
 <script>
+  // Saving goes through the JSON API (/api/v1), same as external clients.
+  document.getElementById('settings-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    await apiJson('PUT', '/api/v1/settings', {
+      tax_rate_pct: Number(f.get('tax_rate_pct')),
+      target_dividend_total: Number(f.get('target_dividend_total')),
+      target_yield_buy_pct: Number(f.get('target_yield_buy_pct')),
+      target_yield_now_pct: Number(f.get('target_yield_now_pct')),
+      target_yield_value_pct: Number(f.get('target_yield_value_pct')),
+    });
+    location.reload();
+  });
+
   const taxEl = document.querySelector('[name="tax_rate_pct"]');
   const totalEl = document.querySelector('[name="target_dividend_total"]');
   const monthlyEl = document.querySelector('[name="target_monthly_income"]');

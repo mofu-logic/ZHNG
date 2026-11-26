@@ -212,16 +212,15 @@ def test_http_request_event_logged(client, db):
 
 
 def test_settings_update_event(client, db):
-    client.post(
-        "/settings",
-        data={
-            "tax_rate_pct": "20.315",
-            "target_dividend_total": "1200000",
-            "target_yield_buy_pct": "3.0",
-            "target_yield_now_pct": "3.5",
-            "target_yield_value_pct": "4.0",
+    client.put(
+        "/api/v1/settings",
+        json={
+            "tax_rate_pct": 20.315,
+            "target_dividend_total": 1200000,
+            "target_yield_buy_pct": 3.0,
+            "target_yield_now_pct": 3.5,
+            "target_yield_value_pct": 4.0,
         },
-        follow_redirects=False,
     )
     rows = _rows(db, "settings.updated")
     assert len(rows) == 1
