@@ -146,3 +146,28 @@ def test_summary_counts_holdings_only(client, db):
     assert "値上がり銘柄数：0銘柄" in page
     assert "変わらず銘柄数：1銘柄" in page
     assert "7777" not in page
+
+
+def test_candidate_preview(client, db, monkeypatch):
+    monkeypatch.setattr(main.httpx, "AsyncClient", _named_fake_client())
+    r = client.get("/api/v1/candidates/preview/7777")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "テスト候補(株)"
+    assert body["close_price"] == 1000.0
+    # Preview alone must not register anything.
+    assert db.execute(
+        "SELECT count(*) c FROM candidates"
+    ).fetchone()["c"] == 0
+    # The page carries the preview slot and the shared dialog.
+    page = client.get("/candidates").text
+    assert 'id="candidate-preview"' in page
+    assert "showDialog" in page
+
+
+def test_candidate_preview_not_found(client, db, monkeypatch):
+    monkeypatch.setattr(
+        main.httpx, "AsyncClient", make_fake_client(fail_codes=("0000",))
+    )
+    assert client.get("/api/v1/candidates/preview/0000").status_code == 404
+    assert client.get("/api/v1/candidates/preview/ab").status_code == 422

@@ -56,6 +56,17 @@
   .addform label { font-size: 13px; color: #5b6575; display: flex; flex-direction: column; gap: 2px; }
   .addform input, .addform select { font-size: 14px; padding: 5px 7px; border: 1px solid #c9d1de; border-radius: 6px; background: #fff; }
   .delbtn { font-size: 13px; padding: 3px 9px; border-radius: 6px; border: 1px solid #c9d1de; background: #fff; color: #c62f3b; cursor: pointer; }
+  .dlg-overlay { position: fixed; inset: 0; background: rgba(20, 28, 45, .45); display: flex; align-items: center; justify-content: center; z-index: 100; opacity: 0; transition: opacity .15s; }
+  .dlg-overlay.show { opacity: 1; }
+  .dlg { background: #fff; border-radius: 14px; box-shadow: 0 12px 40px rgba(0,0,0,.3); max-width: 420px; width: calc(100% - 40px); padding: 20px 22px; transform: translateY(6px) scale(.98); transition: transform .15s; }
+  .dlg-overlay.show .dlg { transform: none; }
+  .dlg-title { font-size: 17px; font-weight: 700; color: #20304d; margin-bottom: 8px; }
+  .dlg-msg { font-size: 14.5px; line-height: 1.65; color: #1c2330; white-space: pre-wrap; }
+  .dlg-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .dlg-btns .dlg-cancel { background: #fff; color: #20304d; border: 1px solid #c9d1de; }
+  .dlg-btns .dlg-danger { background: #c62f3b; border-color: #c62f3b; }
+  .preview-name { font-weight: 700; color: #20304d; }
+  .preview-err { color: #c62f3b; }
 </style>
 </head>
 <body>
@@ -87,6 +98,55 @@
     if (!r.ok) { alert('保存に失敗しました（' + r.status + '）'); throw new Error('api ' + r.status); }
     return r.status === 204 ? null : r.json();
   }
+  // Modern modal dialog (replaces alert/confirm). Resolves true when
+  // the OK button is chosen, false on cancel / overlay click / Esc.
+  function showDialog({title, message, okText = 'OK', cancelText = null, danger = false}) {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.className = 'dlg-overlay';
+      const dlg = document.createElement('div');
+      dlg.className = 'dlg';
+      dlg.setAttribute('role', 'dialog');
+      dlg.setAttribute('aria-modal', 'true');
+      const t = document.createElement('div');
+      t.className = 'dlg-title';
+      t.textContent = title;
+      const m = document.createElement('div');
+      m.className = 'dlg-msg';
+      m.textContent = message || '';
+      const btns = document.createElement('div');
+      btns.className = 'dlg-btns';
+      const close = (val) => {
+        overlay.classList.remove('show');
+        document.removeEventListener('keydown', onKey);
+        setTimeout(() => overlay.remove(), 150);
+        resolve(val);
+      };
+      const onKey = (e) => { if (e.key === 'Escape') close(false); };
+      if (cancelText) {
+        const cb = document.createElement('button');
+        cb.type = 'button';
+        cb.className = 'dlg-cancel';
+        cb.textContent = cancelText;
+        cb.addEventListener('click', () => close(false));
+        btns.appendChild(cb);
+      }
+      const ok = document.createElement('button');
+      ok.type = 'button';
+      if (danger) ok.className = 'dlg-danger';
+      ok.textContent = okText;
+      ok.addEventListener('click', () => close(true));
+      btns.appendChild(ok);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
+      document.addEventListener('keydown', onKey);
+      dlg.append(t, m, btns);
+      overlay.appendChild(dlg);
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('show'));
+      ok.focus();
+    });
+  }
+
   function strOrNull(v) { v = (v || '').trim(); return v === '' ? null : v; }
   function numOrNull(v) { return v === '' || v == null ? null : Number(v); }
   function intOrNull(v) { return v === '' || v == null ? null : parseInt(v, 10); }

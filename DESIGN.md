@@ -139,4 +139,5 @@
 - 業務ロジック（約定状態の自動判定、売却損益の自動計算、月あたり所得の自動算出など）は API ハンドラではなく共通のサービス層に置き、どのクライアントからでも同じ導出・同じ動作ログになるようにする。
 - エンドポイント：`GET/POST /api/v1/buys`、`DELETE /api/v1/buys/{id}`、`GET/POST /api/v1/sales`、`DELETE /api/v1/sales/{id}`、`GET /api/v1/dividend-benefits`、`GET/PUT /api/v1/dividend-benefits/{code}`（手編集項目のみ更新可。配当は従来どおり自動取得のみ）、`GET/PUT /api/v1/settings`（月あたり所得は入力に含めず、応答で算出値を返す）、`GET/POST /api/v1/candidates`、`DELETE /api/v1/candidates/{code}`。
 - 購入候補（candidates テーブル）：登録 POST はその場で Yahoo!ファイナンスから取得し、取得できないコードは登録しない（502）。重複登録は 409。取得した情報は daily_snapshots に保存するが、候補は保有ではないため配当・優待マスタへの自動反映と配当変更の記録は行わない。夜間バッチの取得対象には候補も含める（マスタ反映は保有のみ）。サマリーの騰落数・値動き Top10 も保有銘柄だけを数える。
+- 誤登録防止：コード入力欄は4〜5文字の入力が揃った時点で `GET /api/v1/candidates/preview/{code}`（登録せず取得だけ）で銘柄名と現在値をボタンの右に表示する。重複・削除などのメッセージは共通のモーダルダイアログ（base.html の showDialog）で表示する。
 - 認証は現状なし（ローカル NW のみで運用する前提は従来どおり）。外部に公開・連携する段階で認証と公開範囲の見直しを行う。

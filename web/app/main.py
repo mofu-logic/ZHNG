@@ -1426,12 +1426,38 @@ def api_candidates_list():
     return [_candidate_out(r) for r in rows]
 
 
+class CandidatePreviewOut(BaseModel):
+    code: str
+    name: str | None
+    close_price: float | None
+
+
+@app.get("/api/v1/candidates/preview/{code}", response_model=CandidatePreviewOut, tags=["candidates"])
+def api_candidates_preview(code: str):
+    """Fetch a quote without registering it (the UI shows the stock
+    name next to the register button so a mistyped code is caught
+    before registration)."""
+    code = code.strip().upper()
+    if not re.fullmatch(r"[0-9A-Za-z]{4,5}", code):
+        raise HTTPException(
+            status_code=422, detail="銘柄コードの形式が正しくありません"
+        )
+    try:
+        market, name, price, fields = asyncio.run(fetch_one_quote(code))
+    except RuntimeError:
+        raise HTTPException(status_code=404, detail="銘柄が見つかりませんでした")
+    return dict(code=code, name=name, close_price=price)
+
+
 @app.post("/api/v1/candidates", status_code=201, response_model=CandidateOut, tags=["candidates"])
 def api_candidates_create(payload: CandidateIn):
     code = payload.code.strip().upper()
     with db() as conn:
         if candidate_exists(conn, code):
-            raise HTTPException(status_code=409, detail="already registered")
+            raise HTTPException(
+                status_code=409,
+                detail="この銘柄はすでに購入候補に登録されています",
+            )
     # Registration fetches the quote right away; a code that cannot be
     # fetched at all is not registered.
     try:
@@ -1459,7 +1485,9 @@ def api_candidates_delete(code: str):
         deleted = delete_candidate(conn, code)
         conn.commit()
     if not deleted:
-        raise HTTPException(status_code=404, detail="candidate not found")
+        raise HTTPException(
+            status_code=404, detail="購入候補に登録されていません"
+        )
     emit_event("candidate.deleted", code=code)
     return None
 

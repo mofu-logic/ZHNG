@@ -3,8 +3,9 @@
 <h2>購入候補</h2>
 <div class="sub">リサーチ中の銘柄です。銘柄コード（完全一致）を入力すると、その場で情報を取得して登録します。登録した銘柄は夜間バッチの取得対象にも追加され、情報が更新されます。</div>
 <form class="addform" id="candidate-form" style="margin-top:12px">
-  <label>銘柄コード<input type="text" name="code" required style="width:100px" placeholder="例: 9984"></label>
-  <button type="submit">候補に登録</button>
+  <label>銘柄コード<input type="text" name="code" id="candidate-code" required style="width:100px" placeholder="例: 9984" autocomplete="off"></label>
+  <button type="submit" id="candidate-submit">候補に登録</button>
+  <span id="candidate-preview" style="margin-left:10px"></span>
 </form>
 <div class="tblwrap" style="margin-top:10px">
 <table>
@@ -21,11 +22,11 @@
       <td class="num">{{ r.close_price|price }}</td>
       <td class="num {{ 'pos' if (r.change or 0) >= 0 else 'neg' }}">{% if r.change is not none %}{{ r.change|signed }}（{{ r.change_pct|pcts }}）{% else %}―{% endif %}</td>
       <td class="num">{{ r.dividend_forecast|price }}</td>
-      <td class="num">{{ r.dividend_yield|pct }}</td>
+      <td class="num">{{ r.dividend_yield|pctv }}</td>
       <td class="num">{{ r.per|price }}</td>
       <td class="num">{{ r.pbr|price }}</td>
       <td>{{ r.snap_date or '―' }}</td>
-      <td><button type="button" class="delbtn" data-del-candidate="{{ r.code }}">削除</button></td>
+      <td><button type="button" class="delbtn" data-del-candidate="{{ r.code }}" data-name="{{ r.name or '' }}">削除</button></td>
     </tr>
   {% endfor %}
   </tbody>
@@ -36,25 +37,93 @@
 {% endif %}
 <script>
   // Writes go through the JSON API (/api/v1), same as external clients.
+  const codeInput = document.getElementById('candidate-code');
+  const previewEl = document.getElementById('candidate-preview');
+  const submitBtn = document.getElementById('candidate-submit');
+  let previewTimer = null;
+  let previewSeq = 0;
+
+  // As soon as a full code is typed, fetch the quote (without
+  // registering) and show the stock name next to the button, so a
+  // mistyped code is visible before it can be registered.
+  codeInput.addEventListener('input', () => {
+    const code = codeInput.value.trim().toUpperCase();
+    clearTimeout(previewTimer);
+    if (!/^[0-9A-Z]{4,5}$/.test(code)) {
+      previewEl.textContent = '';
+      return;
+    }
+    previewEl.innerHTML = '<span class="sub">確認中…</span>';
+    const seq = ++previewSeq;
+    previewTimer = setTimeout(async () => {
+      try {
+        const r = await fetch('/api/v1/candidates/preview/' + encodeURIComponent(code));
+        if (seq !== previewSeq) return;
+        if (!r.ok) {
+          previewEl.innerHTML = '<span class="preview-err">銘柄が見つかりませんでした</span>';
+          return;
+        }
+        const d = await r.json();
+        if (seq !== previewSeq) return;
+        previewEl.innerHTML = '';
+        const name = document.createElement('span');
+        name.className = 'preview-name';
+        name.textContent = d.name || code;
+        previewEl.appendChild(name);
+        if (d.close_price != null) {
+          const price = document.createElement('span');
+          price.className = 'sub';
+          price.textContent = '（現在値 ' + Number(d.close_price).toLocaleString('ja-JP') + '円）';
+          previewEl.appendChild(price);
+        }
+      } catch (e) {
+        if (seq === previewSeq) previewEl.textContent = '';
+      }
+    }, 400);
+  });
+
   document.getElementById('candidate-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const f = new FormData(e.target);
-    const btn = e.target.querySelector('button[type="submit"]');
-    btn.disabled = true;
-    btn.textContent = '取得中…';
+    const code = codeInput.value.trim().toUpperCase();
+    submitBtn.disabled = true;
+    submitBtn.textContent = '取得中…';
     try {
-      await apiJson('POST', '/api/v1/candidates', {code: (f.get('code') || '').trim()});
-      location.reload();
+      const r = await fetch('/api/v1/candidates', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({code}),
+      });
+      if (r.status === 201) { location.reload(); return; }
+      const d = await r.json().catch(() => ({}));
+      await showDialog({
+        title: r.status === 409 ? '登録済みの銘柄です' : '登録できませんでした',
+        message: d.detail || ('エラーが発生しました（' + r.status + '）'),
+      });
     } catch (err) {
-      btn.disabled = false;
-      btn.textContent = '候補に登録';
+      await showDialog({title: '登録できませんでした', message: '通信エラーが発生しました。'});
     }
+    submitBtn.disabled = false;
+    submitBtn.textContent = '候補に登録';
   });
+
   document.querySelectorAll('[data-del-candidate]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (!confirm('この候補を削除しますか？')) return;
-      await apiJson('DELETE', '/api/v1/candidates/' + encodeURIComponent(btn.dataset.delCandidate));
-      location.reload();
+      const code = btn.dataset.delCandidate;
+      const ok = await showDialog({
+        title: '購入候補から削除しますか？',
+        message: code + ' ' + (btn.dataset.name || '') + ' を購入候補から削除します。',
+        okText: '削除する',
+        cancelText: 'キャンセル',
+        danger: true,
+      });
+      if (!ok) return;
+      const r = await fetch('/api/v1/candidates/' + encodeURIComponent(code), {method: 'DELETE'});
+      if (r.status === 204) { location.reload(); return; }
+      const d = await r.json().catch(() => ({}));
+      await showDialog({
+        title: '削除できませんでした',
+        message: d.detail || ('エラーが発生しました（' + r.status + '）'),
+      });
     });
   });
 </script>
