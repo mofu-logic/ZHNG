@@ -1639,7 +1639,7 @@ def data_page(request: Request):
         daily = conn.execute(
             """
             SELECT snap_date, count(*) AS codes FROM daily_snapshots
-            GROUP BY snap_date ORDER BY snap_date DESC LIMIT 7
+            GROUP BY snap_date ORDER BY snap_date DESC LIMIT 3
             """
         ).fetchall()
     runs_out = []
