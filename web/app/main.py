@@ -104,6 +104,8 @@ ALTER TABLE candidates ADD COLUMN IF NOT EXISTS memo text;
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS target_price numeric;
 ALTER TABLE dividend_benefits ADD COLUMN IF NOT EXISTS policy text;
 ALTER TABLE dividend_benefits ADD COLUMN IF NOT EXISTS created_on date DEFAULT CURRENT_DATE;
+ALTER TABLE stocks ADD COLUMN IF NOT EXISTS industry text;
+ALTER TABLE stocks ADD COLUMN IF NOT EXISTS industry_fetched_on date;
 """
 
 
@@ -242,6 +244,18 @@ def parse_index_page(html):
     return price, _page_fields(html)
 
 
+def parse_profile_page(html):
+    """Industry classification from the Yahoo! Finance Japan profile
+    page (quote/{code}.{suffix}/profile): a table row labelled
+    業種分類 whose value is the industry name (linked to a search)."""
+    m = re.search(r"業種分類</th><td[^>]*>(?:<a[^>]*>)?([^<]{1,30})", html)
+    if m:
+        name = m.group(1).strip()
+        if name:
+            return name
+    return None
+
+
 def _store_quote(conn, code, price, fields, snap_date, run_id=None,
                  update_dividend=True):
     """Save one fetched quote: the raw price point, the daily
@@ -347,6 +361,17 @@ async def fetch_all(note="manual"):
                     "SELECT DISTINCT code FROM holdings"
                 ).fetchall()
             }
+            # Industry changes rarely: fetch the profile page only
+            # when the industry is unknown or ~6 months stale, so the
+            # extra request does not double every night's batch.
+            industry_due = {
+                r["code"]
+                for r in conn.execute(
+                    "SELECT code FROM stocks WHERE industry IS NULL"
+                    " OR industry_fetched_on IS NULL"
+                    " OR industry_fetched_on < CURRENT_DATE - 180"
+                ).fetchall()
+            }
             run_id = conn.execute(
                 "INSERT INTO fetch_runs(started_at, note, total_count, done_count)"
                 " VALUES (now(), %s, %s, 0) RETURNING id",
@@ -373,6 +398,18 @@ async def fetch_all(note="manual"):
                     price, fields = parse_jp_page(r.text)
                     if price is None or price <= 0:
                         raise RuntimeError("price not found in page")
+                    industry = None
+                    if code in industry_due:
+                        # A failed profile fetch must not fail the quote.
+                        try:
+                            pr = await client.get(
+                                f"https://finance.yahoo.co.jp/quote/{code}.{suffix}/profile"
+                            )
+                            if pr.status_code == 200:
+                                industry = parse_profile_page(pr.text)
+                        except Exception:
+                            industry = None
+                        await asyncio.sleep(random.uniform(3, 8))
                     # The 01:00 batch reads the previous trading day's close;
                     # JST-9h maps the fetch moment to that trading day.
                     snap_date = (datetime.now(JST) - timedelta(hours=9)).date()
@@ -382,6 +419,13 @@ async def fetch_all(note="manual"):
                             run_id=run_id,
                             update_dividend=code in holding_codes,
                         )
+                        if industry:
+                            conn.execute(
+                                "UPDATE stocks SET industry = %s,"
+                                " industry_fetched_on = CURRENT_DATE"
+                                " WHERE code = %s",
+                                (industry, code),
+                            )
                         conn.commit()
                     ok += 1
                 except Exception as e:
@@ -844,6 +888,7 @@ def summary(request: Request):
                  close_price=fnum(r["close_price"]))
             for r in candidates_at_target(conn)
         ]
+
     movers = []
     for code, s in snaps.items():
         if code == "N225" or code not in holding_codes:

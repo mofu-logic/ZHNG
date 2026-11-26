@@ -36,7 +36,7 @@
 
 ## 4. データモデル
 
-- `stocks`（銘柄マスタ）：code（PK、英数字コード）、name、market（東証・名証など）
+- `stocks`（銘柄マスタ）：code（PK、英数字コード）、name、market（東証・名証など）、industry（業種。Yahoo!ファイナンスの企業情報ページの「業種分類」から取得。変わりにくい情報なので、未取得または約6か月経過した銘柄だけ夜間バッチで取り直す）、industry_fetched_on（業種の最終取得日）
 - `holdings`（保有）：id、code（FK）、account_type（特定/NISA）、avg_price（平均取得単価）、shares、lent_shares（貸株数）、ordered_shares（発注数）、updated_at
 - `buy_lots`（買い履歴）：id、code、name、avg_price、shares、purchase_date（NULL可）、policy（購入時の方針・判断）、trigger_note（購入契機）、note（説明）、status（注文中／一部約定／約定済）
 - `sales`（売り履歴）：id、code、name、buy_price、shares、purchase_date、sell_price、sell_shares、executed_shares（約定株数）、order_start_date、executed_date、profit、status（注文中／一部約定／約定済）、memo

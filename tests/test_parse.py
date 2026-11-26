@@ -4,7 +4,7 @@ The nightly fetch depends on these CSS-class regexes; if Yahoo changes
 its markup, these tests are the canary. Fixtures mimic the real page
 structure (styled-number spans inside dt/dd data-list items).
 """
-from app.main import parse_index_page, parse_jp_page
+from app.main import parse_index_page, parse_jp_page, parse_profile_page
 
 JP_PAGE = """
 <html><body>
@@ -99,3 +99,14 @@ def test_parse_index_page_uses_common_price_board():
 def test_parse_index_page_missing():
     price, _ = parse_index_page("<html><body></body></html>")
     assert price is None
+
+PROFILE_PAGE = """
+<html><body><table>
+<tr><th class="head">業種分類</th><td class="detail"><a href="https://finance.yahoo.co.jp/search/qi?ids=7050">銀行業</a></td></tr>
+</table></body></html>
+"""
+
+
+def test_parse_profile_page():
+    assert parse_profile_page(PROFILE_PAGE) == "銀行業"
+    assert parse_profile_page("<html><body></body></html>") is None

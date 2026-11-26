@@ -300,3 +300,43 @@ def test_fetch_one_quote_falls_back_to_fukuoka(monkeypatch):
     market, name, price, fields = asyncio.run(main.fetch_one_quote("1771"))
     assert market == "福証"
     assert price == 1000.0
+
+
+def test_fetch_stores_industry_once(fake_fetch, db, monkeypatch):
+    from test_parse import PROFILE_PAGE
+
+    hits = {"profile": 0}
+
+    class ProfileClient:
+        def __init__(self, headers=None, timeout=None):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url):
+            if "998407" in url:
+                from test_parse import INDEX_PAGE
+
+                return FakeResponse(200, INDEX_PAGE)
+            if url.endswith("/profile"):
+                hits["profile"] += 1
+                return FakeResponse(200, PROFILE_PAGE)
+            return FakeResponse(200, JP_PAGE)
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", ProfileClient)
+    _seed_two_stocks(db)
+    db.commit()
+    asyncio.run(main.fetch_all())
+    rows = db.execute(
+        "SELECT code, industry, industry_fetched_on FROM stocks ORDER BY code"
+    ).fetchall()
+    assert {r["industry"] for r in rows} == {"銀行業"}
+    assert all(r["industry_fetched_on"] is not None for r in rows)
+    assert hits["profile"] == 2  # one per code
+    # Fresh industries are not refetched on the next run.
+    asyncio.run(main.fetch_all())
+    assert hits["profile"] == 2

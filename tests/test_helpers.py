@@ -5,6 +5,8 @@ Pydantic's job in the /api/v1 models, covered by tests/test_api.py.)
 """
 from datetime import date
 
+import pytest
+
 from app.main import _prev_trading_date
 
 
@@ -25,3 +27,4 @@ def test_prev_trading_date_skips_weekend():
     assert _prev_trading_date(date(2026, 11, 29), None) == date(2026, 11, 27)
     # Sat 2026-11-28 -> Fri 2026-11-27
     assert _prev_trading_date(date(2026, 11, 28), None) == date(2026, 11, 27)
+

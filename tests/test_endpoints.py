@@ -347,3 +347,4 @@ def test_summary_page(client, db):
     body = r.text
     assert "58,000" in body  # Nikkei close
     assert "テスト銘柄" in body  # mover / dividend change rows
+
