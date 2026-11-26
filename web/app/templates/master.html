@@ -137,6 +137,10 @@
       policyLabel.appendChild(policyBox);
       const fundLabel = document.createElement('label');
       fundLabel.style.fontWeight = '400';
+      fundLabel.style.display = 'inline-flex';
+      fundLabel.style.flexDirection = 'row';
+      fundLabel.style.alignItems = 'center';
+      fundLabel.style.gap = '5px';
       const fundCheck = document.createElement('input');
       fundCheck.type = 'checkbox';
       fundCheck.checked = !!cur.funding_target;
