@@ -111,18 +111,26 @@
       noteArea.value = cur.judgment_note || '';
       noteLabel.appendChild(noteArea);
       const policyLabel = mkLabel('方針');
+      policyLabel.style.flexDirection = 'row';
+      policyLabel.style.alignItems = 'center';
+      policyLabel.style.gap = '18px';
       const policyBox = document.createElement('div');
       policyBox.style.display = 'flex';
-      policyBox.style.gap = '14px';
+      policyBox.style.alignItems = 'center';
+      policyBox.style.gap = '18px';
       const currentParts = (cur.policy || '').split('・');
       const policyChecks = POLICY_PARTS.map(p => {
         const lab = document.createElement('label');
         lab.style.fontWeight = '400';
+        lab.style.display = 'inline-flex';
+        lab.style.flexDirection = 'row';
+        lab.style.alignItems = 'center';
+        lab.style.gap = '5px';
         const cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.value = p;
         cb.checked = currentParts.includes(p);
-        lab.append(cb, document.createTextNode(' ' + p));
+        lab.append(cb, document.createTextNode(p));
         policyBox.appendChild(lab);
         return cb;
       });
