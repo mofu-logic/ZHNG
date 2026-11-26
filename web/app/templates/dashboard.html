@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="sub">現在値：{% if price_at %}{{ price_at.strftime('%Y/%m/%d %H:%M') }} 時点{% else %}未取得{% endif %}（夜間バッチ 1:00 JST ＋ 手動取得）</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="k">保有株 評価額合計<span class="help" tabindex="0" data-tip="保有している全銘柄について「現在値 × 保有株数」を合計した、今の時価での評価額です。">?</span></div><div class="v">¥{{ kpi.total_value|yen }}</div><div class="t">{{ kpi.count }}銘柄</div></div>
+  <div class="kpi"><div class="k">年間配当予想（税引き前）<span class="help" tabindex="0" data-tip="各銘柄の「1株配当（会社予想）× 保有株数」を合計した、1年分の配当の見込み額です。税金は引かれていない金額です。">?</span></div><div class="v">¥{{ kpi.total_div|yen }}</div><div class="t">目標 ¥{{ kpi.target_div|yen }}</div></div>
+  <div class="kpi"><div class="k">月あたり所得（税引き後）<span class="help" tabindex="0" data-tip="年間配当予想（税引き前）から税金を引いて、12か月で割った金額です。計算：年間配当予想 ×（1 − 税率）÷ 12。税率はKPI設定で変更できます。">?</span></div><div class="v">¥{{ kpi.monthly|yen }}</div><div class="t">目標 ¥{{ kpi.target_monthly|yen }}</div></div>
+  <div class="kpi"><div class="k">平均配当利回り（現在値ベース）<span class="help" tabindex="0" data-tip="銘柄ごとに「1株配当 ÷ 現在値」で求めた利回りを、単純に平均したものです。保有額の大きい・小さいは考慮しません。今買うとした場合の利回りの目安です。">?</span></div><div class="v">{{ kpi.avg_y_now|pct }}</div><div class="t">目標 {{ kpi.target_y_now|pct }} ／ 「1株配当 ÷ 現在値」の平均</div></div>
+  <div class="kpi"><div class="k">平均配当利回り（買値ベース）<span class="help" tabindex="0" data-tip="銘柄ごとに「1株配当 ÷ 取得単価」で求めた利回りを、単純に平均したものです。自分が買った金額に対して、配当がどれだけ戻ってくるかを見る指標です。">?</span></div><div class="v">{{ kpi.avg_y_buy|pct }}</div><div class="t">目標 {{ kpi.target_y_buy|pct }} ／ 「1株配当 ÷ 取得単価」の平均</div></div>
+  <div class="kpi"><div class="k">配当利回り（評価額ベース）<span class="help" tabindex="0" data-tip="「年間配当予想 ÷ 評価額合計」で求めた、ポートフォリオ全体としての利回りです。保有額の大きい銘柄ほど大きく効く（加重平均）点が、他の配当利回りとの違いです。">?</span></div><div class="v">{{ kpi.div_ratio|pct }}</div><div class="t">目標 {{ kpi.target_y_value|pct }} ／ 年間配当予想 ÷ 評価額合計</div></div>
+</div>
+
+<div class="filters">
+  <span class="fcount" id="f-count"></span>
+  <label>検索 <input type="text" id="f-q" placeholder="銘柄名・コード"></label>
+  <label>方針
+    <select id="f-policy"><option value="">すべて</option>{% for p in policies %}<option>{{ p }}</option>{% endfor %}</select>
+  </label>
+  <label>口座
+    <select id="f-account"><option value="">すべて</option>{% for a in accounts %}<option>{{ a }}</option>{% endfor %}</select>
+  </label>
+  <label>損益
+    <select id="f-pnl"><option value="">すべて</option><option value="pos">含み益</option><option value="neg">含み損</option></select>
+  </label>
+  <label>利回り
+    <select id="f-yield-type"><option value="ynow">現在値</option><option value="ybuy">買値</option><option value="ybnow">優待込み（現在値）</option></select>
+  </label>
+  <label>下限 %
+    <input type="number" id="f-yield" step="0.1" min="0" style="width:80px" placeholder="例 4">
+  </label>
+  <label>上限 %
+    <input type="number" id="f-yield-max" step="0.1" min="0" style="width:80px" placeholder="例 2">
+  </label>
+</div>
+
+<div class="tblwrap">
+<table id="holdings">
+  <thead>
+    <tr>
+      <th class="sortable" data-type="str">銘柄コード</th>
+      <th class="sortable" data-type="str">銘柄名</th>
+      <th class="sortable" data-type="str">口座</th>
+      <th class="sortable num" data-type="num">現在値</th>
+      <th class="sortable num" data-type="num">取得単価</th>
+      <th class="sortable num" data-type="num">株数</th>
+      <th class="sortable num" data-type="num">評価額</th>
+      <th class="sortable num" data-type="num">損益</th>
+      <th class="sortable num" data-type="num">損益率</th>
+      <th class="sortable num" data-type="num">利回り(買値)</th>
+      <th class="sortable num" data-type="num">利回り(現在)</th>
+      <th class="sortable num" data-type="num">配当額予想</th>
+      <th class="sortable num" data-type="num">優待体感額</th>
+      <th class="sortable num" data-type="num">優待込(現在)</th>
+      <th class="sortable" data-type="str">方針</th>
+      <th class="sortable" data-type="str">購入日</th>
+      <th>判断メモ</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for i in items %}
+    <tr data-search="{{ (i.name ~ ' ' ~ i.code)|lower }}" data-policy="{{ i.policy or '' }}" data-account="{{ i.account_type or '' }}" data-pnl="{{ 'pos' if (i.pnl or 0) >= 0 else 'neg' }}" data-ynow="{{ i.y_now or 0 }}" data-ybuy="{{ i.y_buy or 0 }}" data-ybnow="{{ i.yb_now or 0 }}">
+      <td class="code"><a href="https://finance.yahoo.co.jp/quote/{{ i.code }}" target="_blank" rel="noopener noreferrer">{{ i.code }}</a></td>
+      <td><span class="name">{{ i.name }}</span></td>
+      <td>{{ i.account_type or '' }}</td>
+      <td class="num" data-v="{{ i.cur_price or 0 }}">{{ i.cur_price|price }}</td>
+      <td class="num" data-v="{{ i.avg_price }}">{{ i.avg_price|price }}</td>
+      <td class="num" data-v="{{ i.shares }}">{{ i.shares }}</td>
+      <td class="num" data-v="{{ i.value or 0 }}">{{ i.value|yen }}</td>
+      <td class="num {{ 'pos' if (i.pnl or 0) >= 0 else 'neg' }}" data-v="{{ i.pnl or 0 }}">{{ i.pnl|signed }}</td>
+      <td class="num {{ 'pos' if (i.pnl or 0) >= 0 else 'neg' }}" data-v="{{ i.pnl_ratio or 0 }}">{{ i.pnl_ratio|pct }}</td>
+      <td class="num" data-v="{{ i.y_buy or 0 }}">{{ i.y_buy|pct }}</td>
+      <td class="num" data-v="{{ i.y_now or 0 }}">{{ i.y_now|pct }}</td>
+      <td class="num" data-v="{{ i.div_amt }}">{{ i.div_amt|yen }}</td>
+      <td class="num" data-v="{{ i.benefit_value or 0 }}">{{ (i.benefit_value or 0)|yen }}</td>
+      <td class="num" data-v="{{ i.yb_now or 0 }}">{{ i.yb_now|pct }}</td>
+      <td class="nowrap">{{ i.policy or '' }}</td>
+      <td class="date">{{ i.purchase_date or '' }}</td>
+      <td class="memo">{{ i.judgment_note or '' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<script>
+  const tbody = document.querySelector('#holdings tbody');
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  // sorting
+  document.querySelectorAll('#holdings th.sortable').forEach((th, idx) => {
+    th.addEventListener('click', () => {
+      const type = th.dataset.type;
+      const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+      document.querySelectorAll('#holdings th').forEach(h => delete h.dataset.dir);
+      th.dataset.dir = dir;
+      const sorted = rows.slice().sort((a, b) => {
+        const ca = a.children[idx], cb = b.children[idx];
+        let va, vb;
+        if (type === 'num') { va = parseFloat(ca.dataset.v || 0); vb = parseFloat(cb.dataset.v || 0); }
+        else { va = ca.textContent.trim(); vb = cb.textContent.trim(); }
+        const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+        return dir === 'asc' ? cmp : -cmp;
+      });
+      sorted.forEach(r => tbody.appendChild(r));
+      th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (dir === 'asc' ? ' ▲' : ' ▼');
+      stripe();
+    });
+  });
+  function stripe() {
+    let i = 0;
+    Array.from(tbody.querySelectorAll('tr')).forEach(r => {
+      if (r.style.display === 'none') { r.classList.remove('alt'); return; }
+      r.classList.toggle('alt', i % 2 === 1);
+      i++;
+    });
+  }
+  // filtering
+  const fq = document.getElementById('f-q'), fp = document.getElementById('f-policy'),
+        fa = document.getElementById('f-account'), fn = document.getElementById('f-pnl'),
+        fy = document.getElementById('f-yield'), fc = document.getElementById('f-count'),
+        fymax = document.getElementById('f-yield-max'), fyt = document.getElementById('f-yield-type');
+  function applyFilter() {
+    const q = fq.value.trim().toLowerCase();
+    const ymin = parseFloat(fy.value);
+    const ymax = parseFloat(fymax.value);
+    let shown = 0;
+    rows.forEach(r => {
+      let ok = true;
+      if (q && !r.dataset.search.includes(q)) ok = false;
+      if (fp.value && r.dataset.policy !== fp.value) ok = false;
+      if (fa.value && r.dataset.account !== fa.value) ok = false;
+      if (fn.value && r.dataset.pnl !== fn.value) ok = false;
+      const yv = parseFloat(r.dataset[fyt.value]) * 100;
+      if (!isNaN(ymin) && yv < ymin) ok = false;
+      if (!isNaN(ymax) && yv > ymax) ok = false;
+      r.style.display = ok ? '' : 'none';
+      if (ok) shown++;
+    });
+    fc.textContent = shown + ' 件表示';
+    stripe();
+  }
+  [fq, fp, fa, fn, fy, fymax, fyt].forEach(el => el.addEventListener('input', applyFilter));
+  applyFilter();
+</script>
+{% endblock %}

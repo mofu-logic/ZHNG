@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="sub" style="font-size:15px">更新日時：{% if updated_at %}{{ updated_at.strftime('%Y/%m/%d %H:%M') }}{% else %}―{% endif %}</div>
+
+<h2>バッチ取得結果</h2>
+<div style="padding-left:16px">
+{% if batch %}
+<div style="font-size:16px">{{ batch.done }}/{{ batch.total }}銘柄、取得完了（{{ batch.started.strftime('%H:%M') }}〜{{ batch.finished.strftime('%H:%M') }}、約{{ batch.minutes }}分）{% if batch.ng %} ／ 失敗 {{ batch.ng }}件{% endif %}</div>
+{% else %}
+<div class="sub">完了したバッチはまだありません。</div>
+{% endif %}
+</div>
+
+<h2>日経平均</h2>
+<div style="padding-left:16px">
+{% if nikkei %}
+<div style="font-size:16px">
+  {{ nikkei.prev_date.strftime('%m/%d') }} 終値 {{ nikkei.prev_close|price }} → {{ nikkei.date.strftime('%m/%d') }} 終値 {{ nikkei.close|price }}
+  （<span class="{{ 'pos' if nikkei.diff >= 0 else 'neg' }}">{{ nikkei.diff|signed2 }} ／ {{ nikkei.pct|pcts }}</span>）
+</div>
+{% else %}
+<div class="sub">日経平均のデータはまだありません（次回の夜間バッチから取得します）。</div>
+{% endif %}
+</div>
+
+{% if movers %}
+<h2>銘柄の騰落数</h2>
+<div style="padding-left:16px">
+  <div>値上がり銘柄数：{{ counts.up }}銘柄</div>
+  <div>値下がり銘柄数：{{ counts.down }}銘柄</div>
+  <div>変わらず銘柄数：{{ counts.flat }}銘柄</div>
+</div>
+
+<h2>値動きの大きかった銘柄 Top10</h2>
+<div style="padding-left:16px">
+<div class="tblwrap">
+<table>
+  <thead><tr><th>銘柄コード</th><th>銘柄名</th><th class="num">{{ prev_date.strftime('%m/%d') }} 終値</th><th class="num">{{ latest_date.strftime('%m/%d') }} 終値</th><th class="num">騰落率</th></tr></thead>
+  <tbody>
+  {% for m in movers %}
+    <tr>
+      <td class="code"><a href="https://finance.yahoo.co.jp/quote/{{ m.code }}" target="_blank" rel="noopener noreferrer">{{ m.code }}</a></td>
+      <td><span class="name">{{ m.name }}</span></td>
+      <td class="num">{{ m.prev_price|price }}</td>
+      <td class="num">{{ m.price|price }}</td>
+      <td class="num {{ 'pos' if m.pct >= 0 else 'neg' }}">{{ m.pct|pcts }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+</div>
+{% else %}
+<h2>値動きの大きかった銘柄 Top10</h2>
+<div class="sub" style="padding-left:16px">データがまだありません。</div>
+{% endif %}
+
+<h2>配当予想の変化</h2>
+<div style="padding-left:16px">
+<div class="sub">変化した銘柄数：{{ changes|length }}銘柄</div>
+{% if changes %}
+<div class="tblwrap" style="margin-top:8px">
+<table>
+  <thead><tr><th>銘柄コード</th><th>銘柄名</th><th class="num">配当予想（1株・円）</th><th class="num">配当利回り</th></tr></thead>
+  <tbody>
+  {% for c in changes %}
+    <tr>
+      <td class="code"><a href="https://finance.yahoo.co.jp/quote/{{ c.code }}" target="_blank" rel="noopener noreferrer">{{ c.code }}</a></td>
+      <td><span class="name">{{ c.name }}</span></td>
+      <td class="num">{{ c.old_div|price }} → {{ c.new_div|price }}</td>
+      <td class="num">{{ c.old_yield|pctv }} → {{ c.new_yield|pctv }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+</div>
+{% endblock %}

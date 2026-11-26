@@ -1,0 +1,19 @@
+# 秘密情報
+.env
+.env.*
+!.env.example
+
+# 個人の金融データ（絶対にコミットしない）
+db/seed.sql
+tools/gen_seed.py
+*.xlsx
+*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# その他
+*.log
+.DS_Store

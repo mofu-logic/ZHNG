@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>KPI設定</h2>
+<div class="sub">ダッシュボードのKPIに使う税率と目標値です。保存すると即座にダッシュボードへ反映されます。</div>
+<form method="post" action="/settings" style="margin-top:14px; max-width:520px">
+  <table>
+    <tbody>
+      <tr>
+        <td>源泉徴収税率（%）</td>
+        <td><input type="number" name="tax_rate_pct" step="0.001" min="0" max="100" value="{{ tax_rate_pct }}" style="width:140px"></td>
+      </tr>
+      <tr>
+        <td>目標：年間配当合計（円）</td>
+        <td><input type="number" name="target_dividend_total" step="1" min="0" value="{{ target_dividend_total|int }}" style="width:140px"></td>
+      </tr>
+      <tr>
+        <td>目標：月あたり所得（税引き後）（円）<br><span class="sub">年間配当合計 ×（1 − 税率）÷ 12 で自動算出</span></td>
+        <td><input type="text" name="target_monthly_income" value="{{ target_monthly_income|int }}" readonly style="width:140px; background:#eef1f6; color:#43506a"></td>
+      </tr>
+      <tr>
+        <td>目標：平均配当利回り（買値ベース）（%）</td>
+        <td><input type="number" name="target_yield_buy_pct" step="0.01" min="0" value="{{ target_yield_buy_pct }}" style="width:140px"></td>
+      </tr>
+      <tr>
+        <td>目標：平均配当利回り（現在値ベース）（%）</td>
+        <td><input type="number" name="target_yield_now_pct" step="0.01" min="0" value="{{ target_yield_now_pct }}" style="width:140px"></td>
+      </tr>
+      <tr>
+        <td>目標：配当利回り（評価額ベース）（%）</td>
+        <td><input type="number" name="target_yield_value_pct" step="0.01" min="0" value="{{ target_yield_value_pct }}" style="width:140px"></td>
+      </tr>
+    </tbody>
+  </table>
+  <div style="margin-top:14px"><button type="submit">保存する</button></div>
+</form>
+<script>
+  const taxEl = document.querySelector('[name="tax_rate_pct"]');
+  const totalEl = document.querySelector('[name="target_dividend_total"]');
+  const monthlyEl = document.querySelector('[name="target_monthly_income"]');
+  function calcMonthly() {
+    const t = parseFloat(taxEl.value) || 0;
+    const d = parseFloat(totalEl.value) || 0;
+    monthlyEl.value = Math.round(d * (1 - t / 100) / 12).toLocaleString('ja-JP');
+  }
+  [taxEl, totalEl].forEach(el => el.addEventListener('input', calcMonthly));
+  calcMonthly();
+</script>
+{% endblock %}

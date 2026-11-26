@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>データ更新</h2>
+<div class="sub">
+  株価と配当（会社予想）は Yahoo!ファイナンスの銘柄ページから取得します（東証は .T、名証は .N）。
+  夜間バッチは毎日 1:00 JST に自動実行されます。手動でも取得できます。
+  レート制限を避けるため1件ごとに25〜45秒の間隔を空けて取得するので、全銘柄で40分前後かかります。
+  取得した1株配当（会社予想）は、配当・優待マスタへ自動で反映されます。
+</div>
+<div class="sub" id="run-status" style="margin-top:8px; font-size:14px">
+  {% if fetching %}取得を実行中です…{% endif %}
+</div>
+<form method="post" action="/fetch" style="margin:12px 0">
+  <button type="submit" id="fetch-btn" {% if fetching %}disabled style="opacity:.5; cursor:not-allowed"{% endif %}>今すぐ株価を取得</button>
+</form>
+
+<h2>取得履歴（直近3回）</h2>
+<div class="tblwrap">
+<table>
+  <thead><tr><th>開始</th><th>終了</th><th>進捗</th><th>結果</th><th>種別</th></tr></thead>
+  <tbody>
+  {% for r in runs %}
+    <tr>
+      <td class="nowrap">{{ r.started_at.strftime('%Y/%m/%d %H:%M') if r.started_at else '' }}</td>
+      <td class="nowrap">{{ r.finished_at.strftime('%Y/%m/%d %H:%M') if r.finished_at else '実行中' }}</td>
+      <td class="nowrap">{% if r.total_count %}{{ r.done_count or 0 }}/{{ r.total_count }}件 完了{% else %}―{% endif %}</td>
+      <td class="nowrap">{{ r.result }}</td>
+      <td class="nowrap">{{ r.kind }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h2>日次データ（daily_snapshots）</h2>
+<div class="sub">取得したデータを日毎に別テーブルへ保存しています（終値・前日終値・始高安・出来高・時価総額・1株配当（会社予想）・配当利回り・PER・PBR）。</div>
+<div class="tblwrap" style="margin-top:8px">
+<table>
+  <thead><tr><th>日付</th><th class="num">銘柄数</th></tr></thead>
+  <tbody>
+  {% for d in daily %}
+    <tr><td>{{ d.snap_date }}</td><td class="num">{{ d.codes }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h2>最新の取得値</h2>
+<div class="tblwrap">
+<table>
+  <thead><tr><th>銘柄コード</th><th>銘柄名</th><th class="num">現在値</th><th>取得日時</th></tr></thead>
+  <tbody>
+  {% for p in prices %}
+    <tr>
+      <td class="code">{{ p.code }}</td>
+      <td><span class="name">{{ p.name or '' }}</span></td>
+      <td class="num">{{ p.price|price }}</td>
+      <td>{{ p.captured_at.strftime('%Y/%m/%d %H:%M') }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<script>
+  const statusEl = document.getElementById('run-status');
+  const btn = document.getElementById('fetch-btn');
+  async function poll() {
+    try {
+      const r = await fetch('/api/fetch-status');
+      const s = await r.json();
+      if (s.running) {
+        statusEl.textContent = '取得を実行中です： ' + s.done + '/' + s.total + '件 完了';
+        btn.disabled = true;
+        btn.style.opacity = '.5';
+        btn.style.cursor = 'not-allowed';
+        setTimeout(poll, 10000);
+      } else if (statusEl.textContent.includes('実行中')) {
+        location.reload();
+      }
+    } catch (e) { setTimeout(poll, 15000); }
+  }
+  {% if fetching %}poll();{% endif %}
+</script>
+{% endblock %}

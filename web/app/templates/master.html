@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>配当・優待マスタ</h2>
+<div class="sub">配当は Yahoo!ファイナンスの「1株配当（会社予想）」を夜間バッチで自動取得した値です（編集はできません）。優待と判断メモは手で更新してください。保存すると記載更新日が今日になります。</div>
+<div class="tblwrap" style="margin-top:10px">
+<table>
+  <thead><tr>
+    <th>銘柄コード</th><th>銘柄名</th><th>配当（年・1株）</th><th>優待体感額</th><th>優待内容</th>
+    <th>判断日</th><th>判断メモ</th><th>資金化対象</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <form method="post" action="/master/{{ r.code }}">
+      <td class="code">{{ r.code }}<br><span class="code">更新 {{ r.info_updated_on or '―' }}</span></td>
+      <td><span class="name">{{ r.name or '' }}</span></td>
+      <td class="num">{{ r.dividend_auto if r.dividend_auto is not none else (r.dividend_forecast if r.dividend_forecast is not none else '―') }}</td>
+      <td><input type="text" name="benefit_value" value="{{ r.benefit_value if r.benefit_value is not none else '' }}" style="width:80px"></td>
+      <td><input type="text" name="benefit_desc" value="{{ r.benefit_desc or '' }}" style="width:110px"></td>
+      <td><input type="date" name="judgment_on" value="{{ r.judgment_on or '' }}"></td>
+      <td><input type="text" name="judgment_note" value="{{ r.judgment_note or '' }}" style="width:260px"></td>
+      <td><input type="checkbox" name="funding_target" {% if r.funding_target %}checked{% endif %}></td>
+      <td><button type="submit" class="sub">保存</button></td>
+      </form>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}
