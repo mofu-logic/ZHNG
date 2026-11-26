@@ -1,0 +1,5 @@
+# CI lint scope: syntax errors and pyflakes-level issues only.
+# Style-level rules are intentionally out of scope for this project,
+# and pinning the selection keeps CI stable as ruff's defaults evolve.
+[lint]
+select = ["E4", "E7", "E9", "F"]
