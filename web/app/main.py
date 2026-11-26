@@ -99,6 +99,9 @@ CREATE TABLE IF NOT EXISTS app_logs(
 CREATE INDEX IF NOT EXISTS app_logs_ts_idx ON app_logs(ts DESC);
 CREATE TABLE IF NOT EXISTS candidates(
   code text PRIMARY KEY, added_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE candidates ADD COLUMN IF NOT EXISTS policy text;
+ALTER TABLE candidates ADD COLUMN IF NOT EXISTS memo text;
+ALTER TABLE candidates ADD COLUMN IF NOT EXISTS target_price numeric;
 """
 
 
@@ -778,6 +781,12 @@ def summary(request: Request):
             r["code"]
             for r in conn.execute("SELECT DISTINCT code FROM holdings").fetchall()
         }
+        target_hits = [
+            dict(code=r["code"], name=r["name"],
+                 target_price=fnum(r["target_price"]),
+                 close_price=fnum(r["close_price"]))
+            for r in candidates_at_target(conn)
+        ]
     movers = []
     for code, s in snaps.items():
         if code == "N225" or code not in holding_codes:
@@ -829,6 +838,7 @@ def summary(request: Request):
             nikkei=nikkei,
             movers=movers[:10],
             counts=counts,
+            target_hits=target_hits,
             latest_date=latest_date,
             prev_date=_prev_trading_date(latest_date, prev_date) if latest_date else None,
         ),
@@ -919,7 +929,7 @@ def list_candidate_rows(conn):
     """Purchase candidates with their latest daily snapshot."""
     return conn.execute(
         """
-        SELECT c.code, c.added_at, s.name,
+        SELECT c.code, c.added_at, c.policy, c.memo, c.target_price, s.name,
                snap.snap_date, snap.close_price, snap.prev_close,
                snap.dividend_forecast, snap.dividend_yield, snap.per, snap.pbr
         FROM candidates c
@@ -960,6 +970,51 @@ def register_candidate(conn, code, market, name):
 def delete_candidate(conn, code):
     cur = conn.execute("DELETE FROM candidates WHERE code = %s", (code,))
     return cur.rowcount > 0
+
+
+def update_candidate(conn, code, *, policy, memo, target_price):
+    cur = conn.execute(
+        "UPDATE candidates SET policy = %s, memo = %s, target_price = %s"
+        " WHERE code = %s",
+        (policy, memo, target_price, code),
+    )
+    return cur.rowcount > 0
+
+
+def candidate_policies(conn):
+    """The policy values offered for candidates: the same set the
+    holdings filter lists (each holding's current lot policy)."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT policy FROM (
+            SELECT (SELECT policy FROM buy_lots b WHERE b.code = h.code
+                    ORDER BY (b.avg_price = h.avg_price
+                              AND b.shares = h.shares) DESC,
+                             b.purchase_date DESC NULLS LAST, b.id DESC
+                    LIMIT 1) AS policy
+            FROM holdings h
+        ) t WHERE policy IS NOT NULL AND policy <> '' ORDER BY policy
+        """
+    ).fetchall()
+    return [r["policy"] for r in rows]
+
+
+def candidates_at_target(conn):
+    """Candidates whose latest close has reached their target price."""
+    return conn.execute(
+        """
+        SELECT c.code, s.name, c.target_price, snap.close_price
+        FROM candidates c
+        LEFT JOIN stocks s ON s.code = c.code
+        JOIN LATERAL (
+            SELECT * FROM daily_snapshots d
+            WHERE d.code = c.code ORDER BY d.snap_date DESC LIMIT 1
+        ) snap ON true
+        WHERE c.target_price IS NOT NULL
+          AND snap.close_price <= c.target_price
+        ORDER BY c.code
+        """
+    ).fetchall()
 
 
 def update_benefit(conn, code, *, benefit_value, benefit_desc, judgment_on,
@@ -1379,6 +1434,7 @@ def _candidate_out(r):
     if close is not None and prev:
         change = close - prev
         change_pct = change / prev * 100
+    target = fnum(r["target_price"])
     return dict(
         code=r["code"], name=r["name"],
         added_at=r["added_at"].isoformat() if r["added_at"] else None,
@@ -1388,6 +1444,9 @@ def _candidate_out(r):
         dividend_forecast=fnum(r["dividend_forecast"]),
         dividend_yield=fnum(r["dividend_yield"]),
         per=fnum(r["per"]), pbr=fnum(r["pbr"]),
+        policy=r["policy"], memo=r["memo"], target_price=target,
+        reached=(target is not None and close is not None
+                 and close <= target),
     )
 
 
@@ -1408,15 +1467,50 @@ class CandidateOut(BaseModel):
     dividend_yield: float | None
     per: float | None
     pbr: float | None
+    policy: str | None
+    memo: str | None
+    target_price: float | None
+    reached: bool
+
+
+class CandidateUpdateIn(BaseModel):
+    policy: str | None = None
+    memo: str | None = None
+    target_price: float | None = Field(default=None, ge=0)
 
 
 @app.get("/candidates", response_class=HTMLResponse)
 def candidates_page(request: Request):
     with db() as conn:
         rows = [_candidate_out(r) for r in list_candidate_rows(conn)]
+        policies = candidate_policies(conn)
+    editor = {
+        r["code"]: dict(policy=r["policy"], memo=r["memo"],
+                        target_price=r["target_price"])
+        for r in rows
+    }
     return templates.TemplateResponse(
-        request, "candidates.html", dict(rows=rows)
+        request, "candidates.html",
+        dict(rows=rows, policies=policies, editor=editor),
     )
+
+
+@app.put("/api/v1/candidates/{code}", response_model=CandidateOut, tags=["candidates"])
+def api_candidates_update(code: str, payload: CandidateUpdateIn):
+    code = code.strip().upper()
+    with db() as conn:
+        updated = update_candidate(
+            conn, code, policy=payload.policy, memo=payload.memo,
+            target_price=payload.target_price,
+        )
+        conn.commit()
+        if not updated:
+            raise HTTPException(
+                status_code=404, detail="購入候補に登録されていません"
+            )
+        row = [r for r in list_candidate_rows(conn) if r["code"] == code][0]
+    emit_event("candidate.updated", code=code)
+    return _candidate_out(row)
 
 
 @app.get("/api/v1/candidates", response_model=list[CandidateOut], tags=["candidates"])

@@ -23,6 +23,28 @@
 {% endif %}
 </div>
 
+{% if target_hits %}
+<h2>希望購入価格に到達した購入候補</h2>
+<div style="padding-left:16px">
+<div class="tblwrap">
+<table>
+  <thead><tr><th>銘柄コード</th><th>銘柄名</th><th class="num">現在値</th><th class="num">希望購入価格</th><th class="num">差額</th></tr></thead>
+  <tbody>
+  {% for t in target_hits %}
+    <tr>
+      <td class="code"><a href="https://finance.yahoo.co.jp/quote/{{ t.code }}" target="_blank" rel="noopener noreferrer">{{ t.code }}</a></td>
+      <td><span class="name">{{ t.name }}</span></td>
+      <td class="num">{{ t.close_price|price }}</td>
+      <td class="num">{{ t.target_price|price }}</td>
+      <td class="num">{{ (t.target_price - t.close_price)|price }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+</div>
+{% endif %}
+
 {% if movers %}
 <h2>銘柄の騰落数</h2>
 <div style="padding-left:16px">

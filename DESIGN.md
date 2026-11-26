@@ -137,7 +137,8 @@
 - 売買履歴・配当優待マスタ・設定の登録／更新／参照は JSON API `/api/v1` に統一する。Web画面もこの API 経由で書き込みを行い、将来の外部連携も同じ IF を使う（画面専用の書き込み経路は作らない）。設定には KPI 項目のほか、ログ保存期間（log_retention_days）と OTel 連携（otel_enabled／otel_endpoint）を含む。
 - 仕様は OpenAPI に準拠する。FastAPI の自動生成で `/openapi.json`（OpenAPI 3.1、API バージョン 1.0.0）が正となる。Swagger UI（/docs）と ReDoc（/redoc）は、設定の「開発者向け＞APIテスト」スイッチが有効な間だけ表示され、無効時は 404 を返す（/openapi.json 自体は連携用の仕様書として常時取得できる）。リクエスト／レスポンスは Pydantic モデル（BuyIn/BuyOut 等）で型と必須項目を定義し、不正な入力は 422、対象なしは 404 を返す。
 - 業務ロジック（約定状態の自動判定、売却損益の自動計算、月あたり所得の自動算出など）は API ハンドラではなく共通のサービス層に置き、どのクライアントからでも同じ導出・同じ動作ログになるようにする。
-- エンドポイント：`GET/POST /api/v1/buys`、`DELETE /api/v1/buys/{id}`、`GET/POST /api/v1/sales`、`DELETE /api/v1/sales/{id}`、`GET /api/v1/dividend-benefits`、`GET/PUT /api/v1/dividend-benefits/{code}`（手編集項目のみ更新可。配当は従来どおり自動取得のみ）、`GET/PUT /api/v1/settings`（月あたり所得は入力に含めず、応答で算出値を返す）、`GET/POST /api/v1/candidates`、`DELETE /api/v1/candidates/{code}`。
+- エンドポイント：`GET/POST /api/v1/buys`、`DELETE /api/v1/buys/{id}`、`GET/POST /api/v1/sales`、`DELETE /api/v1/sales/{id}`、`GET /api/v1/dividend-benefits`、`GET/PUT /api/v1/dividend-benefits/{code}`（手編集項目のみ更新可。配当は従来どおり自動取得のみ）、`GET/PUT /api/v1/settings`（月あたり所得は入力に含めず、応答で算出値を返す）、`GET/POST /api/v1/candidates`、`PUT /api/v1/candidates/{code}`（方針・メモ・希望購入価格の更新）、`DELETE /api/v1/candidates/{code}`。
 - 購入候補（candidates テーブル）：登録 POST はその場で Yahoo!ファイナンスから取得し、取得できないコードは登録しない（502）。重複登録は 409。取得した情報は daily_snapshots に保存するが、候補は保有ではないため配当・優待マスタへの自動反映と配当変更の記録は行わない。夜間バッチの取得対象には候補も含める（マスタ反映は保有のみ）。サマリーの騰落数・値動き Top10 も保有銘柄だけを数える。
 - 誤登録防止：コード入力欄は4〜5文字の入力が揃った時点で `GET /api/v1/candidates/preview/{code}`（登録せず取得だけ）で銘柄名と現在値をボタンの右に表示する。重複・削除などのメッセージは共通のモーダルダイアログ（base.html の showDialog）で表示する。
+- 候補の手編集項目（`PUT /api/v1/candidates/{code}`）：方針（保有株一覧のフィルタと同じ選択肢＝各保有の現行ロットの方針の集合から選択）／メモ（自由記述）／希望購入価格。希望購入価格を設定した候補は、最新の終値がその価格以下になるとサマリーに「希望購入価格に到達した購入候補」として表示される（候補一覧でも「到達」タグが付く）。
 - 認証は現状なし（ローカル NW のみで運用する前提は従来どおり）。外部に公開・連携する段階で認証と公開範囲の見直しを行う。

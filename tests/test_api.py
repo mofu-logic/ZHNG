@@ -30,7 +30,7 @@ def test_openapi_document(client):
     for name in (
         "BuyIn", "BuyOut", "SaleIn", "SaleOut",
         "BenefitIn", "BenefitOut", "SettingsIn", "SettingsOut",
-        "CandidateIn", "CandidateOut",
+        "CandidateIn", "CandidateOut", "CandidateUpdateIn",
     ):
         assert name in schemas, name
     # Requests and responses are described by the named schemas.

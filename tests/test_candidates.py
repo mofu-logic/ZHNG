@@ -172,3 +172,59 @@ def test_candidate_preview_not_found(client, db, monkeypatch):
     )
     assert client.get("/api/v1/candidates/preview/0000").status_code == 404
     assert client.get("/api/v1/candidates/preview/ab").status_code == 422
+
+
+def test_candidate_update_and_target_alert(client, db, monkeypatch):
+    monkeypatch.setattr(main.httpx, "AsyncClient", _named_fake_client())
+    client.post("/api/v1/candidates", json={"code": "7777"})  # close 1000
+    r = client.put(
+        "/api/v1/candidates/7777",
+        json={"policy": "長期保有", "memo": "決算を見る",
+              "target_price": 1200},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["policy"] == "長期保有"
+    assert body["memo"] == "決算を見る"
+    assert body["target_price"] == 1200.0
+    assert body["reached"] is True  # 1000 <= 1200
+    row = db.execute(
+        "SELECT policy, memo, target_price FROM candidates"
+        " WHERE code='7777'"
+    ).fetchone()
+    assert row["policy"] == "長期保有" and row["memo"] == "決算を見る"
+    # Reached candidates are surfaced on the summary tab.
+    summary = client.get("/summary").text
+    assert "希望購入価格に到達した購入候補" in summary
+    assert "7777" in summary
+    # Raising the bar above the close clears both flags.
+    r = client.put(
+        "/api/v1/candidates/7777",
+        json={"policy": "長期保有", "memo": None, "target_price": 800},
+    )
+    assert r.json()["reached"] is False
+    assert "希望購入価格に到達した購入候補" not in client.get("/summary").text
+    # Unknown candidate / invalid target price.
+    assert client.put(
+        "/api/v1/candidates/7779", json={"policy": None}
+    ).status_code == 404
+    assert client.put(
+        "/api/v1/candidates/7777", json={"target_price": -1}
+    ).status_code == 422
+
+
+def test_candidate_page_offers_holding_policies(client, db, monkeypatch):
+    seed_stock_holding(db)
+    db.execute(
+        "INSERT INTO buy_lots(code, name, avg_price, shares,"
+        " purchase_date, policy, status)"
+        " VALUES ('9999', 'テスト銘柄', 800, 100, '2026-01-01',"
+        " '長期保有', '約定済')"
+    )
+    db.commit()
+    page = client.get("/candidates").text
+    # tojson escapes non-ASCII; in the browser it decodes back.
+    import json as _json
+
+    assert _json.dumps("長期保有") in page  # editor's policy options
+    assert "1株配当</th>" in page  # shortened column header
