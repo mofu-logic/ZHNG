@@ -69,6 +69,7 @@ def test_candidate_register_fetches_info(client, db, monkeypatch):
     page = client.get("/candidates").text
     assert "7777" in page and "テスト候補" in page
     assert "https://finance.yahoo.co.jp/quote/7777" in page
+    assert "登録件数：1件" in page
 
 
 def test_candidate_duplicate_and_delete(client, db, monkeypatch):
