@@ -182,9 +182,14 @@ class OtelBridgeHandler(logging.Handler):
             pass  # logging must never break the app
 
 
+_provider = None
+_otlp_processor = None
+
+
 def setup_observability(database_url):
     """Install the LoggerProvider (stdout JSON + DB exporters) and a
     TracerProvider. Returns the tracer used for request spans."""
+    global _provider
     resource = Resource.create({"service.name": SERVICE_NAME})
     provider = LoggerProvider(resource=resource)
     provider.add_log_record_processor(SimpleLogRecordProcessor(JsonStdoutExporter()))
@@ -192,8 +197,40 @@ def setup_observability(database_url):
         SimpleLogRecordProcessor(DbLogExporter(database_url))
     )
     set_logger_provider(provider)
+    _provider = provider
     trace.set_tracer_provider(TracerProvider(resource=resource))
     return trace.get_tracer(SERVICE_NAME)
+
+
+def configure_otlp(enabled, endpoint):
+    """Attach (or detach) the OTLP/HTTP log exporter at runtime.
+
+    Called at startup with the stored settings and again whenever the
+    settings change, so toggling the OpenTelemetry integration does
+    not need a restart. A shut-down processor stays registered but
+    inert. Never raises: a bad endpoint must not break logging."""
+    global _otlp_processor
+    if _otlp_processor is not None:
+        try:
+            _otlp_processor.shutdown()
+        except Exception:
+            pass
+        _otlp_processor = None
+    if not enabled or not endpoint or _provider is None:
+        return
+    try:
+        from opentelemetry.exporter.otlp.proto.http._log_exporter import (
+            OTLPLogExporter,
+        )
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+
+        _otlp_processor = BatchLogRecordProcessor(
+            OTLPLogExporter(endpoint=endpoint)
+        )
+        _provider.add_log_record_processor(_otlp_processor)
+    except Exception as e:
+        print(f"OTLP exporter setup failed: {e}", file=sys.stderr, flush=True)
+        _otlp_processor = None
 
 
 def emit_event(event, severity="INFO", **attributes):

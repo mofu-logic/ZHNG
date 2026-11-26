@@ -227,6 +227,18 @@ def test_settings_update_event(client, db):
     assert rows[0]["attributes"]["target_dividend_total"] == 1200000.0
 
 
+def test_configure_otlp_never_raises(db):
+    from app import observability
+
+    # Unreachable endpoint: setup and emit must stay safe, and
+    # disabling again must restore the plain pipeline.
+    observability.configure_otlp(True, "http://127.0.0.1:1/v1/logs")
+    observability.configure_otlp(False, None)
+    observability.configure_otlp(True, "")
+    main.emit_event("otel.reconfigured")
+    assert len(_rows(db, "otel.reconfigured")) == 1
+
+
 def test_fetch_events(db, monkeypatch):
     _seed_two_stocks(db)
 

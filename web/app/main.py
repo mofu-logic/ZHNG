@@ -23,9 +23,14 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from psycopg.rows import dict_row
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.observability import OtelBridgeHandler, emit_event, setup_observability
+from app.observability import (
+    OtelBridgeHandler,
+    configure_otlp,
+    emit_event,
+    setup_observability,
+)
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 
@@ -448,9 +453,12 @@ async def lifespan(app):
         conn.commit()
         if cur.rowcount:
             logger.warning("closed %s stale fetch run(s) at startup", cur.rowcount)
-        # Operation logs are kept for 90 days.
-        conn.execute("DELETE FROM app_logs WHERE ts < now() - interval '90 days'")
+        # Operation logs are kept for the configured retention period,
+        # and the OTel integration follows the stored settings.
+        config = app_config(conn)
+        prune_app_logs(conn, config["log_retention_days"])
         conn.commit()
+    configure_otlp(config["otel_enabled"], config["otel_endpoint"])
     emit_event("app.started")
     task = asyncio.create_task(scheduler())
     yield
@@ -462,7 +470,7 @@ app = FastAPI(
     title="株式ポートフォリオ API",
     version="1.0.0",
     description=(
-        "売買履歴・配当優待マスタ・KPI設定の登録／更新／参照を行う "
+        "売買履歴・配当優待マスタ・設定の登録／更新／参照を行う "
         "JSON API（/api/v1）。画面と外部連携で同一の IF を使う。"
         "このドキュメントは OpenAPI 仕様として /openapi.json でも取得できる。"
     ),
@@ -493,8 +501,15 @@ def round_half_up(v):
 
 
 def get_settings(conn):
-    rows = conn.execute("SELECT key, value FROM settings").fetchall()
-    return {r["key"]: float(r["value"]) for r in rows}
+    """Numeric settings as floats (the KPI values). Non-numeric values
+    (e.g. the OTel endpoint) are skipped here and read via app_config."""
+    out = {}
+    for r in conn.execute("SELECT key, value FROM settings").fetchall():
+        try:
+            out[r["key"]] = float(r["value"])
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 # ---------------------------------------------------------------- pages
@@ -845,7 +860,8 @@ def settings_view(st):
 
 def update_settings(conn, *, tax_rate_pct, target_dividend_total,
                     target_yield_buy_pct, target_yield_now_pct,
-                    target_yield_value_pct):
+                    target_yield_value_pct, log_retention_days=90,
+                    otel_enabled=False, otel_endpoint=None):
     # Monthly after-tax income target is derived, not entered directly:
     # annual dividend target x (1 - tax rate) / 12.
     monthly = round_half_up(target_dividend_total * (1 - tax_rate_pct / 100) / 12)
@@ -856,6 +872,7 @@ def update_settings(conn, *, tax_rate_pct, target_dividend_total,
         "target_yield_buy": target_yield_buy_pct / 100,
         "target_yield_now": target_yield_now_pct / 100,
         "target_yield_value": target_yield_value_pct / 100,
+        "log_retention_days": float(log_retention_days),
     }
     for k, v in values.items():
         conn.execute(
@@ -863,7 +880,59 @@ def update_settings(conn, *, tax_rate_pct, target_dividend_total,
             " ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
             (k, repr(v)),
         )
+    # Non-numeric settings are stored as plain strings.
+    for k, v in (
+        ("otel_enabled", "true" if otel_enabled else "false"),
+        ("otel_endpoint", otel_endpoint or ""),
+    ):
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES (%s, %s)"
+            " ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
+            (k, v),
+        )
+    values["otel_enabled"] = bool(otel_enabled)
     return values
+
+
+DEFAULT_LOG_RETENTION_DAYS = 90
+
+
+def _raw_setting(conn, key):
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = %s", (key,)
+    ).fetchone()
+    return row["value"] if row else None
+
+
+def app_config(conn):
+    """The non-KPI app settings: log retention and OTel integration."""
+    retention = _raw_setting(conn, "log_retention_days")
+    try:
+        retention_days = (
+            int(float(retention)) if retention else DEFAULT_LOG_RETENTION_DAYS
+        )
+    except ValueError:
+        retention_days = DEFAULT_LOG_RETENTION_DAYS
+    return dict(
+        log_retention_days=retention_days,
+        otel_enabled=_raw_setting(conn, "otel_enabled") == "true",
+        otel_endpoint=_raw_setting(conn, "otel_endpoint") or "",
+    )
+
+
+def settings_full_view(conn):
+    """Everything the settings page / API exposes: KPI view + app config."""
+    view = settings_view(get_settings(conn))
+    view.update(app_config(conn))
+    return view
+
+
+def prune_app_logs(conn, retention_days):
+    cur = conn.execute(
+        "DELETE FROM app_logs WHERE ts < now() - make_interval(days => %s)",
+        (retention_days,),
+    )
+    return cur.rowcount
 
 
 @app.get("/master", response_class=HTMLResponse)
@@ -881,10 +950,8 @@ def master(request: Request):
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request):
     with db() as conn:
-        st = get_settings(conn)
-    return templates.TemplateResponse(
-        request, "settings.html", settings_view(st)
-    )
+        view = settings_full_view(conn)
+    return templates.TemplateResponse(request, "settings.html", view)
 
 
 # ---------------------------------------------------------------- JSON API
@@ -977,6 +1044,9 @@ class SettingsIn(BaseModel):
     target_yield_buy_pct: float
     target_yield_now_pct: float
     target_yield_value_pct: float
+    log_retention_days: int = Field(default=90, ge=1, le=3650)
+    otel_enabled: bool = False
+    otel_endpoint: str | None = None
 
 
 class BuyOut(BaseModel):
@@ -1029,6 +1099,9 @@ class SettingsOut(BaseModel):
     target_yield_buy_pct: float
     target_yield_now_pct: float
     target_yield_value_pct: float
+    log_retention_days: int
+    otel_enabled: bool
+    otel_endpoint: str
 
 
 @app.get("/api/v1/buys", response_model=list[BuyOut], tags=["buys"])
@@ -1137,18 +1210,22 @@ def api_benefits_update(code: str, payload: BenefitIn):
 @app.get("/api/v1/settings", response_model=SettingsOut, tags=["settings"])
 def api_settings_get():
     with db() as conn:
-        st = get_settings(conn)
-    return settings_view(st)
+        view = settings_full_view(conn)
+    return view
 
 
 @app.put("/api/v1/settings", response_model=SettingsOut, tags=["settings"])
 def api_settings_update(payload: SettingsIn):
     with db() as conn:
         values = update_settings(conn, **payload.model_dump())
+        # A shorter retention applies immediately, not at next startup.
+        prune_app_logs(conn, payload.log_retention_days)
         conn.commit()
-        st = get_settings(conn)
+        view = settings_full_view(conn)
     emit_event("settings.updated", **values)
-    return settings_view(st)
+    # Toggling the OTel integration takes effect without a restart.
+    configure_otlp(payload.otel_enabled, payload.otel_endpoint)
+    return view
 
 
 @app.get("/data", response_class=HTMLResponse)

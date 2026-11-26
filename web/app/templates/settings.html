@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>KPI設定</h2>
-<div class="sub">ダッシュボードのKPIに使う税率と目標値です。保存すると即座にダッシュボードへ反映されます。</div>
-<form id="settings-form" style="margin-top:14px; max-width:520px">
+<h2>設定</h2>
+<div class="sub">KPIの税率・目標値と、アプリ全体の設定です。保存すると即座に反映されます。</div>
+<form id="settings-form" style="margin-top:14px; max-width:640px">
+  <h3>KPI</h3>
   <table>
     <tbody>
       <tr>
@@ -31,19 +32,50 @@
       </tr>
     </tbody>
   </table>
+
+  <h3 style="margin-top:22px">ログ</h3>
+  <table>
+    <tbody>
+      <tr>
+        <td>動作ログの保存期間（日）</td>
+        <td><input type="number" name="log_retention_days" step="1" min="1" max="3650" value="{{ log_retention_days }}" style="width:140px"></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="sub">保存期間を過ぎた動作ログは、起動時とこの設定の保存時に削除されます。</div>
+
+  <h3 style="margin-top:22px">OpenTelemetry連携</h3>
+  <table>
+    <tbody>
+      <tr>
+        <td>OTLP/HTTPでログを送信する</td>
+        <td><input type="checkbox" name="otel_enabled" {% if otel_enabled %}checked{% endif %}></td>
+      </tr>
+      <tr>
+        <td>エンドポイント（URL）</td>
+        <td><input type="text" name="otel_endpoint" value="{{ otel_endpoint }}" placeholder="http://localhost:4318/v1/logs" style="width:320px"></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="sub">構造化ログを OTLP/HTTP で外部コレクタへ送信します。変更は再起動なしで反映されます。送信に失敗してもアプリの動作には影響しません。</div>
+
   <div style="margin-top:14px"><button type="submit">保存する</button></div>
 </form>
 <script>
   // Saving goes through the JSON API (/api/v1), same as external clients.
   document.getElementById('settings-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const f = new FormData(e.target);
+    const form = e.target;
+    const f = new FormData(form);
     await apiJson('PUT', '/api/v1/settings', {
       tax_rate_pct: Number(f.get('tax_rate_pct')),
       target_dividend_total: Number(f.get('target_dividend_total')),
       target_yield_buy_pct: Number(f.get('target_yield_buy_pct')),
       target_yield_now_pct: Number(f.get('target_yield_now_pct')),
       target_yield_value_pct: Number(f.get('target_yield_value_pct')),
+      log_retention_days: Number(f.get('log_retention_days')),
+      otel_enabled: form.querySelector('[name="otel_enabled"]').checked,
+      otel_endpoint: strOrNull(f.get('otel_endpoint')),
     });
     location.reload();
   });

@@ -67,6 +67,64 @@ def test_api_reads(client, db):
     assert settings["tax_rate_pct"] == 20.315  # built-in default
 
 
+KPI_PAYLOAD = dict(
+    tax_rate_pct=20.315, target_dividend_total=1200000,
+    target_yield_buy_pct=3.0, target_yield_now_pct=3.5,
+    target_yield_value_pct=4.0,
+)
+
+
+def test_settings_app_config_roundtrip(client, db):
+    r = client.put(
+        "/api/v1/settings",
+        json={**KPI_PAYLOAD, "log_retention_days": 30,
+              "otel_enabled": True,
+              "otel_endpoint": "http://collector:4318/v1/logs"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["log_retention_days"] == 30
+    assert body["otel_enabled"] is True
+    assert body["otel_endpoint"] == "http://collector:4318/v1/logs"
+    got = client.get("/api/v1/settings").json()
+    assert got["log_retention_days"] == 30
+    assert got["otel_enabled"] is True
+    # The non-numeric endpoint value must not break the KPI readers.
+    assert client.get("/").status_code == 200
+    page = client.get("/settings").text
+    assert "OpenTelemetry連携" in page
+    assert "動作ログの保存期間" in page
+    # Retention bounds are validated.
+    r = client.put("/api/v1/settings", json={**KPI_PAYLOAD, "log_retention_days": 0})
+    assert r.status_code == 422
+    # Defaults apply when the new fields are omitted.
+    r = client.put("/api/v1/settings", json=KPI_PAYLOAD)
+    assert r.json()["log_retention_days"] == 90
+    assert r.json()["otel_enabled"] is False
+
+
+def test_log_retention_prunes_on_update(client, db):
+    db.execute(
+        "INSERT INTO app_logs(ts, severity, severity_number, body, attributes)"
+        " VALUES (now() - interval '100 days', 'INFO', 9, 'old.log', '{}')"
+    )
+    db.execute(
+        "INSERT INTO app_logs(ts, severity, severity_number, body, attributes)"
+        " VALUES (now(), 'INFO', 9, 'new.log', '{}')"
+    )
+    db.commit()
+    r = client.put(
+        "/api/v1/settings", json={**KPI_PAYLOAD, "log_retention_days": 30}
+    )
+    assert r.status_code == 200
+    bodies = [
+        row["body"]
+        for row in db.execute("SELECT body FROM app_logs").fetchall()
+    ]
+    assert "old.log" not in bodies
+    assert "new.log" in bodies
+
+
 def test_api_validation(client, db):
     # Wrong types and impossible dates are rejected with 422.
     r = client.post("/api/v1/buys", json={"avg_price": "abc"})

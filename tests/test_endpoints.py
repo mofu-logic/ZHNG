@@ -152,10 +152,12 @@ def test_settings_monthly_target_is_derived(client, db):
     assert r.status_code == 200
     # 1,370,347 x (1 - 0.20315) / 12 = 90,996.79... -> round half up
     assert r.json()["target_monthly_income"] == 90997
-    rows = {
-        row["key"]: float(row["value"])
-        for row in db.execute("SELECT key, value FROM settings").fetchall()
-    }
+    rows = {}
+    for row in db.execute("SELECT key, value FROM settings").fetchall():
+        try:
+            rows[row["key"]] = float(row["value"])
+        except ValueError:
+            pass  # non-numeric settings (otel_enabled / otel_endpoint)
     assert rows["target_monthly_income"] == 90997.0
     assert rows["tax_rate"] == pytest.approx(0.20315)
     assert rows["target_yield_value"] == pytest.approx(0.04)
