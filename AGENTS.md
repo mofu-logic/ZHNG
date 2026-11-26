@@ -1,63 +1,64 @@
 # AGENTS.md
 
-Guidance for AI agents (and humans) working on this repository.
-Keep this file short; details live in `DESIGN.md` and `.agents/skills/`.
+このリポジトリで作業する AI エージェント（と人間）向けの指針。
+このファイルは短く保つこと。詳細は `DESIGN.md` と `.agents/skills/` にある。
 
-## What this is
+## これは何か
 
-A personal stock-portfolio web app: Python + FastAPI + Jinja2
-(server-rendered), PostgreSQL, two containers via docker compose
-(`web` + `db`). The app code is a single module, `web/app/main.py`.
-Design decisions and formulas are documented in `DESIGN.md` — read it
-before changing calculations.
+個人用の株式ポートフォリオ管理 Web アプリ。Python + FastAPI + Jinja2
+（サーバサイド描画）、PostgreSQL、docker compose の2コンテナ（`web` + `db`）。
+アプリのコードは単一モジュール `web/app/main.py`。
+設計判断と計算式は `DESIGN.md` にあるので、計算を変更する前に読むこと。
 
-## Hard rules (public repository)
+## ハードルール（Public リポジトリ）
 
-- This repo is **public on purpose**. Never commit secrets, real
-  holdings/trade data, or environment specifics (addresses, hostnames,
-  network layout). `.env`, seed data and data-conversion scripts are
-  gitignored — keep it that way. CI runs gitleaks on every push.
-- `DESIGN.md` is the public-safe design doc: concepts and formulas
-  only, no real amounts or position names. Preserve that when editing.
+- このリポジトリは**意図的に Public**。秘密情報、保有・売買の実データ、
+  環境固有の情報（アドレス、ホスト名、ネットワーク構成）を絶対に
+  コミットしない。`.env`、シードデータ、データ変換スクリプトは
+  gitignore 済み — その状態を維持すること。CI は push のたびに
+  gitleaks を実行する。
+- `DESIGN.md` は公開可能な設計書：考え方と計算式のみで、実額や
+  保有銘柄の具体名は書かない。編集時もその方針を守ること。
 
-## Domain invariants
+## ドメインの不変条件
 
-- **One source of truth per value.** The dividend forecast shown is
-  always the auto-fetched company forecast; it is never edited by hand
-  and has no manual override column. Manual fields exist only for what
-  cannot be fetched (shareholder-benefit estimates, judgment memos).
-  Before adding a second (manual) path for a value, decide which one
-  is authoritative — normally the fetched one.
-- Prices and dividends are fetched only by the nightly batch
-  (01:00 JST) from Yahoo! Finance Japan quote pages. Do not add other
-  sources or trigger fetches casually; the fetch is deliberately slow
-  (25–45 s per code, randomized) because the source rate-limits.
-- Trade status vocabulary is exactly 注文中 / 一部約定 / 約定済.
-  A sale's status and profit may be auto-derived from executed shares;
-  explicit user input always wins over the derivation.
-- The monthly after-tax income target is derived
-  (annual dividend target × (1 − tax rate) / 12, rounded half up),
-  never stored from direct input.
-- Tables may overflow horizontally. Do not wrap or compress cells to
-  force a fit; one line per row and readability win.
+- **値ごとに「正」は1つだけ。** 表示する配当予想は常に自動取得した
+  会社予想であり、手で編集したり手動の上書き欄を持たせたりしない。
+  手編集できるのは自動取得できない項目（優待の体感額、判断メモ）だけ。
+  値に手動の経路を足す前に、どちらを正とするかを決めること
+  （原則として自動取得した値が正）。
+- 株価と配当の取得は夜間バッチ（01:00 JST）のみ。取得元は
+  Yahoo!ファイナンス日本の銘柄ページ。別の取得元を足したり、
+  安易に取得を走らせたりしない。取得が意図的に低速
+  （1件あたり25〜45秒、ランダム）なのは、取得元がレート制限を
+  かけるため。
+- 約定状態の語彙は「注文中／一部約定／約定済」の3つに統一する。
+  売却の約定状態と損益は約定株数から自動算出できるが、
+  ユーザーが明示入力した値が常に優先する。
+- 「月あたり所得（税引き後）」の目標は自動算出
+  （年間配当目標 ×（1 − 税率）÷ 12、四捨五入）であり、
+  直接入力した値を保存しない。
+- 表は横にはみ出してよい。画面に収めるためにセルを折り返したり
+  詰めたりしない。1行表示と読みやすさを優先する。
 
-## Working agreements
+## 作業の約束
 
-- **Tests:** `tests/` (pytest). Run them before pushing changes to
-  `web/app` — see `.agents/skills/run-tests/SKILL.md`. Coverage is
-  branch coverage (C1, `.coveragerc`); CI fails below 95%.
-- **CI constraints:** this repo allows local actions only and
-  requires SHA pinning, so workflows must not use external `uses:`
-  actions. Checkout in workflows is plain git with `GITHUB_TOKEN`.
-- **Lint:** ruff scope is pinned in `ruff.toml` (syntax + pyflakes
-  level). Do not widen it or "fix" intentional style (e.g. broad
-  `except` around per-code fetches is deliberate: one bad page must
-  not fail the whole batch).
-- **Dependencies:** versions are pinned as `==x.y.*` in
-  `web/requirements.txt`. Dependabot updates are merged one at a time
-  with deploy verification — see
-  `.agents/skills/dependabot-updates/SKILL.md`. PostgreSQL major
-  upgrades need a dump/restore migration, not just an image bump.
-- **Commits:** explain *why* in the body when the change is not
-  obvious from the diff (a past fix without its reason will be
-  re-broken). Squash-merge pull requests.
+- **テスト：** `tests/`（pytest）。`web/app` を変更したら push の前に
+  実行すること — 手順は `.agents/skills/run-tests/SKILL.md`。
+  カバレッジは分岐カバレッジ（C1、`.coveragerc`）で、CI は
+  95% 未満を失敗とする。
+- **CI の制約：** このリポジトリは外部アクション禁止（local_only）で
+  SHA 固定が必須。ワークフローで外部の `uses:` アクションを使わない
+  こと。チェックアウトは `GITHUB_TOKEN` を使った素の git で行う。
+- **Lint：** ruff の対象範囲は `ruff.toml` で固定（構文と pyflakes
+  水準）。範囲を広げたり、意図的な書き方を「修正」したりしない
+  （例：銘柄ごとの取得を広域 `except` で囲むのは、1件の失敗で
+  バッチ全体を落とさないための意図的な設計）。
+- **依存関係：** バージョンは `web/requirements.txt` で `==x.y.*` と
+  ピン留めする。Dependabot の更新は1件ずつ、デプロイ検証を挟んで
+  マージすること — 手順は `.agents/skills/dependabot-updates/SKILL.md`。
+  PostgreSQL のメジャー更新はイメージ変更だけでは済まず、
+  ダンプ／リストアの移行が必要。
+- **コミット：** 変更の理由が差分から自明でない場合は、本文に
+  「なぜ」を書くこと（理由のない修正は後で壊される）。
+  PR はスカッシュマージする。

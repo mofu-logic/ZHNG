@@ -1,38 +1,38 @@
 ---
 name: dependabot-updates
-description: Triage and merge Dependabot PRs (pip and Docker) one at a time with deploy verification, including the PostgreSQL major-upgrade migration procedure. Use when Dependabot PRs are open.
+description: Dependabot の PR（pip と Docker）を1件ずつ、デプロイ検証を挟んでマージする。PostgreSQL のメジャー更新の移行手順も含む。Dependabot の PR が開いているときに使う。
 ---
 
-# Handle Dependabot updates
+# Dependabot の更新に対応する
 
-## Order and pace
+## 順番と進め方
 
-1. Merge **one PR at a time**: lowest risk first (patch/minor pip
-   bumps), larger version jumps later, database image last.
-2. After each merge: pull on the deployment host, rebuild
-   (`docker compose up -d --build web`), and verify before moving on:
-   `/healthz` returns `{"ok": true}`, and `/`, `/summary`, `/history`,
-   `/master`, `/settings`, `/data` all return 200.
-3. If a PR conflicts because sibling PRs touched adjacent lines of
-   `requirements.txt`, merge `main` into the PR branch, resolve to
-   the union of the bumps, push, and merge once GitHub reports it
-   mergeable (its mergeability flag can lag a few seconds behind a
-   push — re-check before concluding it is stuck).
+1. **1件ずつマージする**：リスクの低いものから（pip のパッチ／
+   マイナー更新）、大きいバージョン跨ぎは後、DB イメージは最後。
+2. マージのたびに、デプロイ先ホストで pull して再ビルド
+   （`docker compose up -d --build web`）し、次へ進む前に確認する：
+   `/healthz` が `{"ok": true}` を返し、`/`、`/summary`、`/history`、
+   `/master`、`/settings`、`/data` がすべて 200 を返すこと。
+3. 兄弟 PR が `requirements.txt` の隣接行を触って競合した場合は、
+   PR ブランチに `main` をマージし、両方の更新が残る形に解消して
+   push する。GitHub の mergeable 判定は push から数秒遅れる
+   ことがあるので、詰まったと結論する前に再確認すること。
 
-## PostgreSQL major upgrades (e.g. 16 → 18)
+## PostgreSQL のメジャー更新（例：16 → 18）
 
-An image bump alone is **not** enough:
+イメージ変更**だけでは済まない**：
 
-- Since PostgreSQL 18 the image's data directory layout changed:
-  the volume mounts at `/var/lib/postgresql` and the cluster lives
-  in a versioned subdirectory. The compose change (image **and**
-  volume mount) must land together.
-- Migrate by dump/restore, keeping two independent backups until the
-  new version has proven itself (e.g. one nightly batch completed):
-  1. Record row counts of all tables.
-  2. `pg_dump` the database to a file outside the repo, and copy the
-     old volume to a backup volume.
-  3. Stop the stack, remove the old volume, start `db` on the new
-     image so it initialises a fresh cluster, restore the dump.
-  4. Verify row counts match exactly and all pages return 200.
-- Never delete the backups in the same session as the migration.
+- PostgreSQL 18 から公式イメージのデータ配置が変わった：
+  ボリュームのマウント先は `/var/lib/postgresql` で、実データは
+  その下のバージョン別サブディレクトリに入る。compose の変更
+  （イメージ**と**マウント先）は同時に入れること。
+- 移行はダンプ／リストアで行い、新バージョンが実績を残す
+  （例：夜間バッチ1回の完了）までは、独立したバックアップを
+  2系統残す：
+  1. 全テーブルの行数を記録する。
+  2. `pg_dump` をリポジトリ外のファイルに取り、旧ボリュームを
+     バックアップ用ボリュームへコピーする。
+  3. スタックを止め、旧ボリュームを削除し、新イメージで `db` を
+     起動して新規クラスタを初期化させ、ダンプをリストアする。
+  4. 行数が完全一致することと、全画面が 200 を返すことを確認する。
+- バックアップは移行した同じセッションでは消さないこと。

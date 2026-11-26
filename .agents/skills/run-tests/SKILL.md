@@ -1,35 +1,35 @@
 ---
 name: run-tests
-description: Run the pytest suite (with branch coverage) the same way CI does, against a throwaway PostgreSQL. Use before pushing any change to web/app, and when adding tests.
+description: CI と同じ条件で pytest スイート（分岐カバレッジ付き）を使い捨ての PostgreSQL に対して実行する。web/app を変更して push する前、およびテストを追加するときに使う。
 ---
 
-# Run the tests
+# テストを実行する
 
-The suite has three layers:
+スイートは3層構成：
 
-- `tests/test_format.py`, `test_helpers.py`, `test_parse.py` — pure
-  functions (formatting, form parsing, Yahoo page parsing). No DB.
-- `tests/test_endpoints.py` — pages and calculations against a real
-  PostgreSQL (dashboard KPIs, trade create/delete flows, status and
-  profit derivation, settings derivation, summary fallbacks).
-- `tests/test_fetch.py` — the nightly fetch pipeline end to end with
-  `httpx` replaced by a fake client (prices, snapshots, dividend
-  auto-update + change records, Nikkei failure isolation).
+- `tests/test_format.py`、`test_helpers.py`、`test_parse.py` — 純粋関数
+  （整形、フォーム変換、Yahoo ページのパース）。DB 不要。
+- `tests/test_endpoints.py` — 実 PostgreSQL に対する画面と計算
+  （ダッシュボードの KPI、売買の追加・削除フロー、約定状態と損益の
+  自動算出、設定の自動算出、サマリーのフォールバック）。
+- `tests/test_fetch.py` — `httpx` をフェイククライアントに差し替えて
+  夜間取得パイプラインを通しで実行（価格、スナップショット、配当の
+  自動更新と変更記録、日経取得失敗の分離）。
 
-DB-backed tests read `TEST_DATABASE_URL`; when no test database is
-reachable they **skip** instead of failing, so a green run with skips
-is not a full verification. Always check the skip count.
+DB 依存テストは `TEST_DATABASE_URL` を読む。テスト用 DB に接続
+できない場合は**失敗ではなくスキップ**になるため、スキップありの
+全合格は完全な検証ではない。必ずスキップ件数を確認すること。
 
-## Against the compose stack (development host)
+## compose スタックに対して実行する（開発ホスト）
 
-Create a test database in the running `db` container once:
+実行中の `db` コンテナにテスト用データベースを1回だけ作る：
 
 ```sh
 docker compose exec db createdb -U stock stock_test
 ```
 
-Then run the suite in a throwaway container built from the web image,
-on the compose network, with the repo mounted:
+その後、web イメージから作った使い捨てコンテナで、compose の
+ネットワークに接続し、リポジトリをマウントして実行する：
 
 ```sh
 PW=$(grep -E "^DB_PASSWORD=" .env | cut -d= -f2-)
@@ -40,14 +40,14 @@ docker run --rm --network stock-app_default -v "$PWD":/repo -w /repo \
    python -m pytest tests --cov=app --cov-report=term-missing -q"
 ```
 
-## Coverage
+## カバレッジ
 
-- Branch coverage (C1) is enabled by `.coveragerc`; CI fails below
-  95%. Do not chase 100%: the scheduler loop body (it sleeps until
-  01:00) is intentionally uncovered.
-- When adding a feature, add tests in the matching layer. For fetch
-  changes, extend the fake client in `tests/test_fetch.py` rather
-  than mocking deeper internals.
-- A test that finds a production bug is a success, not a nuisance:
-  fix the bug, keep the test as the regression guard, and say what
-  happened in the commit body.
+- 分岐カバレッジ（C1）は `.coveragerc` で有効化。CI は 95% 未満を
+  失敗とする。100% を追わないこと：スケジューラのループ本体
+  （01:00 まで sleep する）は意図的に対象外。
+- 機能を足したら、対応する層にテストを足すこと。取得まわりの変更
+  では、より深い内部をモックするのではなく、`tests/test_fetch.py`
+  のフェイククライアントを拡張する。
+- テストが本番バグを見つけるのは成功であって迷惑ではない：
+  バグを直し、テストを回帰防止として残し、コミット本文に
+  何が起きたかを書くこと。
