@@ -213,6 +213,22 @@ def test_candidate_update_and_target_alert(client, db, monkeypatch):
     ).status_code == 422
 
 
+def test_candidate_long_memo_truncated_with_hover(client, db, monkeypatch):
+    monkeypatch.setattr(main.httpx, "AsyncClient", _named_fake_client())
+    client.post("/api/v1/candidates", json={"code": "7777"})
+    memo = "これはテスト用の長いメモです。決算内容を確認してから判断します。"
+    client.put(
+        "/api/v1/candidates/7777",
+        json={"policy": None, "memo": memo, "target_price": None},
+    )
+    page = client.get("/candidates").text
+    # The cell shows only the first 20 chars; the full text rides in
+    # the hover tooltip attribute.
+    assert memo[:20] + "…" in page
+    assert 'data-tip="' + memo + '"' in page
+    assert "memo-tip" in page
+
+
 def test_candidate_page_editor_and_sorting(client, db):
     page = client.get("/candidates").text
     # The policy editor is three checkboxes.

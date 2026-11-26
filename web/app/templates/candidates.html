@@ -28,7 +28,7 @@
       <td class="num" data-v="{{ r.per or 0 }}">{{ r.per|price }}</td>
       <td class="num" data-v="{{ r.pbr or 0 }}">{{ r.pbr|price }}</td>
       <td>{{ r.policy or '' }}</td>
-      <td>{{ r.memo or '' }}</td>
+      <td>{% if r.memo %}{% if r.memo|length > 20 %}<span class="memo-tip" data-tip="{{ r.memo }}">{{ r.memo[:20] }}…</span>{% else %}{{ r.memo }}{% endif %}{% endif %}</td>
       <td class="num" data-v="{{ r.target_price or 0 }}">{{ r.target_price|price }}{% if r.reached %} <span class="tag" style="color:#c62f3b;border-color:#c62f3b;font-weight:700">到達</span>{% endif %}</td>
       <td>{{ r.snap_date or '―' }}</td>
       <td class="nowrap"><button type="button" class="delbtn" style="color:#20304d" data-edit-candidate="{{ r.code }}" data-name="{{ r.name or '' }}">編集</button> <button type="button" class="delbtn" data-del-candidate="{{ r.code }}" data-name="{{ r.name or '' }}">削除</button></td>
