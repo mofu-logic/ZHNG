@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>購入候補</h2>
-<div class="sub">リサーチ中の銘柄です。銘柄コード（完全一致）を入力すると、その場で情報を取得して登録します。登録した銘柄は夜間バッチの取得対象にも追加され、情報が更新されます。</div>
+<div style="display:flex; align-items:center; gap:10px; margin:20px 0 8px">
+  <h2 style="margin:0">購入候補</h2>
+  <span class="help tip-right" style="margin-left:0" tabindex="0" data-tip="リサーチ中の銘柄です。銘柄コード（完全一致）を入力すると、その場で情報を取得して登録します。登録した銘柄は夜間バッチの取得対象にも追加され、情報が更新されます。">?</span>
+</div>
 <form class="addform" id="candidate-form" style="margin-top:12px">
   <label>銘柄コード<input type="text" name="code" id="candidate-code" required style="width:100px" placeholder="例: 9984" autocomplete="off"></label>
   <button type="submit" id="candidate-submit">候補に登録</button>
