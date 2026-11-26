@@ -27,7 +27,8 @@ def test_master_page_display(client, db):
     assert LONG_NOTE[:20] + "…" in page
     assert 'data-tip="' + LONG_NOTE + '"' in page
     # Funding target renders as text now.
-    assert "対象" in page
+    assert "売却候補" in page
+    assert "候補" in page
 
 
 def test_sidebar_layout(client, db):
