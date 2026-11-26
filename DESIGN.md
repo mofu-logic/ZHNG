@@ -40,7 +40,7 @@
 - `holdings`（保有）：id、code（FK）、account_type（特定/NISA）、avg_price（平均取得単価）、shares、lent_shares（貸株数）、ordered_shares（発注数）、updated_at
 - `buy_lots`（買い履歴）：id、code、name、avg_price、shares、purchase_date（NULL可）、policy（購入時の方針・判断）、trigger_note（購入契機）、note（説明）、status（注文中／一部約定／約定済）
 - `sales`（売り履歴）：id、code、name、buy_price、shares、purchase_date、sell_price、sell_shares、executed_shares（約定株数）、order_start_date、executed_date、profit、status（注文中／一部約定／約定済）、memo
-- `dividend_benefits`（配当・優待マスタ）：code（PK/FK）、dividend_forecast（1株あたり年間配当予想）、dividend_auto（自動取得値）、benefit_value（優待体感額・年額）、benefit_desc（優待内容）、info_updated_on（記載更新日）、funding_target（売却候補フラグ。表示名は「売却候補」、内部名は従来どおり）、judgment_on（判断日）、judgment_note（判断内容＝検討メモ）、policy（方針。「値上がり／配当／優待」の組み合わせ。従来は買付ロットから都度導出していたが、マスタを正として移行済み。保有株一覧はマスタ値を優先し、未設定の場合だけロット由来の値にフォールバックする）
+- `dividend_benefits`（配当・優待マスタ）：code（PK/FK）、dividend_forecast（1株あたり年間配当予想）、dividend_auto（自動取得値）、benefit_value（優待体感額・年額）、benefit_desc（優待内容）、info_updated_on（記載更新日）、funding_target（売却候補フラグ。表示名は「売却候補」、内部名は従来どおり）、judgment_on（判断日）、judgment_note（判断内容＝検討メモ）、policy（方針。「値上がり／配当／優待」の組み合わせ。従来は買付ロットから都度導出していたが、マスタを正として移行済み。保有株一覧はマスタ値を優先し、未設定の場合だけロット由来の値にフォールバックする）、created_on（登録日。レコードが追加された日で、銘柄コードの下に表示する。既存分はスプレッドシートからの移行日で一括設定済み）
   - 配当予想は自動取得値を唯一の正とし、画面からの編集は行わない。優待・判断メモなど自動で取れない項目だけを手編集する。
 - `price_points`（株価履歴）：code、captured_at、price、prev_close、day_high、day_low、volume、source。最新行が「現在値」
 - `daily_snapshots`（日次スナップショット）：code × snap_date で終値・前日終値・始高安・出来高・時価総額・1株配当（会社予想）・配当利回り・PER・PBR を保存。時系列グラフや前日比較の土台。日経平均も同じテーブルに指数コードで保存する

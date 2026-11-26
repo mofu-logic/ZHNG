@@ -103,6 +103,7 @@ ALTER TABLE candidates ADD COLUMN IF NOT EXISTS policy text;
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS memo text;
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS target_price numeric;
 ALTER TABLE dividend_benefits ADD COLUMN IF NOT EXISTS policy text;
+ALTER TABLE dividend_benefits ADD COLUMN IF NOT EXISTS created_on date DEFAULT CURRENT_DATE;
 """
 
 
@@ -514,6 +515,23 @@ async def lifespan(app):
         # from the buy lots on every read; it now lives on the dividend
         # master, where it is edited. Seed it once from the latest lot
         # (verified to match the derived value for every held code).
+        # One-time backfill: every master row present at this point
+        # came in with the initial spreadsheet import (2026-11-25);
+        # rows created later get created_on from the column default.
+        cflag = conn.execute(
+            "SELECT value FROM settings"
+            " WHERE key = 'master_created_on_backfilled'"
+        ).fetchone()
+        if cflag is None:
+            conn.execute(
+                "UPDATE dividend_benefits SET created_on = DATE '2026-11-25'"
+            )
+            conn.execute(
+                "INSERT INTO settings(key, value)"
+                " VALUES ('master_created_on_backfilled', '1')"
+                " ON CONFLICT(key) DO NOTHING"
+            )
+            conn.commit()
         flag = conn.execute(
             "SELECT value FROM settings"
             " WHERE key = 'policy_master_migrated'"
@@ -1232,6 +1250,7 @@ def _benefit_out(r):
         judgment_on=_date_out(r["judgment_on"]),
         judgment_note=r["judgment_note"],
         policy=r["policy"],
+        created_on=_date_out(r["created_on"]),
     )
 
 
@@ -1326,6 +1345,7 @@ class BenefitOut(BaseModel):
     judgment_on: date | None
     judgment_note: str | None
     policy: str | None
+    created_on: date | None
 
 
 class SettingsOut(BaseModel):

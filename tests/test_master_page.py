@@ -77,3 +77,14 @@ def test_master_policy_roundtrip_and_dashboard_precedence(client, db):
     assert ">方針</th>" in master
     assert "POLICY_PARTS" in master
     assert "配当・優待" in master
+
+
+def test_master_created_on_and_help_tip(client, db):
+    seed_stock_holding(db)
+    page = client.get("/master").text
+    # The code cell shows the registration date, not the update date.
+    assert "登録" in page
+    assert "tip-right" in page
+    assert "優待と判断メモは自身で更新が必要です" in page
+    body = client.get("/api/v1/dividend-benefits/9999").json()
+    assert body["created_on"] is not None

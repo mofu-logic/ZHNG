@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>配当・優待マスタ</h2>
-<div class="sub">優待と判断メモは手で更新してください。保存すると記載更新日が今日になります。</div>
+<div style="display:flex; align-items:center; gap:10px; margin:20px 0 8px">
+  <h2 style="margin:0">配当・優待マスタ</h2>
+  <span class="help tip-right" style="margin-left:0" tabindex="0" data-tip="優待と判断メモは自身で更新が必要です。更新すると、保有株一覧の優待体感額にも反映されます。">?</span>
+</div>
 <div class="tblwrap" style="margin-top:10px">
 <table id="master">
   <thead><tr>
@@ -11,7 +13,7 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td class="code">{{ r.code }}<br><span class="code">更新 {{ r.info_updated_on or '―' }}</span></td>
+      <td class="code">{{ r.code }}<br><span class="code">登録 {{ r.created_on or '―' }}</span></td>
       <td><span class="name">{{ r.name or '' }}</span></td>
       <td class="num" data-v="{{ r.dividend_auto if r.dividend_auto is not none else (r.dividend_forecast or 0) }}">{{ r.dividend_auto if r.dividend_auto is not none else (r.dividend_forecast if r.dividend_forecast is not none else '―') }}</td>
       <td class="num" data-v="{{ r.benefit_value or 0 }}">{% if r.benefit_value is not none %}{{ r.benefit_value|yen }}{% else %}―{% endif %}</td>
