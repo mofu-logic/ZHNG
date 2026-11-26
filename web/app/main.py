@@ -380,7 +380,8 @@ async def _finish_run(run_id, ok, ng, first_error):
             with db() as conn:
                 conn.execute(
                     "UPDATE fetch_runs SET finished_at=now(), ok_count=%s, ng_count=%s,"
-                    " note = CASE WHEN %s IS NULL THEN note ELSE note || ' / ' || %s END"
+                    " note = CASE WHEN %s::text IS NULL THEN note"
+                    " ELSE note || ' / ' || %s::text END"
                     " WHERE id=%s",
                     (ok, ng, first_error, first_error, run_id),
                 )
