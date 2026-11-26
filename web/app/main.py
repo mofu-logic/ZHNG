@@ -24,9 +24,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from psycopg.rows import dict_row
 
-DATABASE_URL = os.environ["DATABASE_URL"]
-
 from app.observability import OtelBridgeHandler, emit_event, setup_observability
+
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 tracer = setup_observability(DATABASE_URL)
 
