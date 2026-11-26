@@ -10,8 +10,12 @@ description: CI と同じ条件で pytest スイート（分岐カバレッジ�
 - `tests/test_format.py`、`test_helpers.py`、`test_parse.py` — 純粋関数
   （整形、フォーム変換、Yahoo ページのパース）。DB 不要。
 - `tests/test_endpoints.py` — 実 PostgreSQL に対する画面と計算
-  （ダッシュボードの KPI、売買の追加・削除フロー、約定状態と損益の
+  （ダッシュボードの KPI、売買 API の往復、約定状態と損益の
   自動算出、設定の自動算出、サマリーのフォールバック）。
+- `tests/test_api.py` — `/api/v1` の OpenAPI ドキュメント、
+  参照系、バリデーション。
+- `tests/test_logging.py` — 構造化ログ（OTel）の出力形、イベント
+  記録、/logs 画面の絞り込み。
 - `tests/test_fetch.py` — `httpx` をフェイククライアントに差し替えて
   夜間取得パイプラインを通しで実行（価格、スナップショット、配当の
   自動更新と変更記録、日経取得失敗の分離）。
