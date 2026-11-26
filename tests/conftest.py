@@ -26,6 +26,7 @@ from app import main
 
 TABLES = [
     "app_logs",
+    "candidates",
     "dividend_changes",
     "daily_snapshots",
     "price_points",

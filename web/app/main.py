@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS app_logs(
   severity_number integer, body text, attributes jsonb,
   trace_id text, span_id text);
 CREATE INDEX IF NOT EXISTS app_logs_ts_idx ON app_logs(ts DESC);
+CREATE TABLE IF NOT EXISTS candidates(
+  code text PRIMARY KEY, added_at timestamptz NOT NULL DEFAULT now());
 """
 
 
@@ -202,6 +204,13 @@ def parse_jp_page(html):
     return price, _page_fields(html)
 
 
+def parse_stock_name(html, code):
+    """The quote page <title> looks like
+    'ソフトバンクグループ(株)【9984】：株価・株式情報 ... - Yahoo!ファイナンス'."""
+    m = re.search(r"<title>(.*?)【" + re.escape(code) + "】", html, re.S)
+    return m.group(1).strip() if m else None
+
+
 def parse_index_page(html):
     """Nikkei 225 page (quote/998407.O): the main value sits in a
     _CommonPriceBoard__price_ element; the generic _PriceBoard regex
@@ -215,15 +224,111 @@ def parse_index_page(html):
     return price, _page_fields(html)
 
 
+def _store_quote(conn, code, price, fields, snap_date, run_id=None,
+                 update_dividend=True):
+    """Save one fetched quote: the raw price point, the daily
+    snapshot, and (for held stocks only) the dividend master
+    auto-update with its change record. Candidates pass
+    update_dividend=False so research stocks never enter the
+    dividend/benefit master. The caller commits."""
+    div = fields.get("1株配当（会社予想）")
+    volume = fields.get("出来高")
+    conn.execute(
+        "INSERT INTO price_points(code, captured_at, price, prev_close,"
+        " day_high, day_low, volume, source)"
+        " VALUES (%s, now(), %s, %s, %s, %s, %s, 'yahoo-jp')",
+        (
+            code,
+            price,
+            fields.get("前日終値"),
+            fields.get("高値"),
+            fields.get("安値"),
+            int(volume) if volume is not None else None,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO daily_snapshots(code, snap_date, close_price,"
+        " prev_close, open_price, day_high, day_low, volume,"
+        " market_cap_m, dividend_forecast, dividend_yield, per, pbr,"
+        " captured_at, source)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now(), 'yahoo-jp')"
+        " ON CONFLICT (code, snap_date) DO UPDATE SET"
+        " close_price=EXCLUDED.close_price,"
+        " prev_close=EXCLUDED.prev_close,"
+        " open_price=EXCLUDED.open_price, day_high=EXCLUDED.day_high,"
+        " day_low=EXCLUDED.day_low, volume=EXCLUDED.volume,"
+        " market_cap_m=EXCLUDED.market_cap_m,"
+        " dividend_forecast=EXCLUDED.dividend_forecast,"
+        " dividend_yield=EXCLUDED.dividend_yield, per=EXCLUDED.per,"
+        " pbr=EXCLUDED.pbr, captured_at=now()",
+        (
+            code,
+            snap_date,
+            price,
+            fields.get("前日終値"),
+            fields.get("始値"),
+            fields.get("高値"),
+            fields.get("安値"),
+            int(volume) if volume is not None else None,
+            fields.get("時価総額"),
+            div,
+            fields.get("配当利回り（会社予想）"),
+            fields.get("PER（会社予想）"),
+            fields.get("PBR（実績）"),
+        ),
+    )
+    if div is not None and update_dividend:
+        old_row = conn.execute(
+            "SELECT dividend_forecast FROM dividend_benefits"
+            " WHERE code = %s",
+            (code,),
+        ).fetchone()
+        if (
+            old_row
+            and old_row["dividend_forecast"] is not None
+            and float(old_row["dividend_forecast"]) != float(div)
+        ):
+            conn.execute(
+                "INSERT INTO dividend_changes(run_id, code,"
+                " old_div, new_div) VALUES (%s, %s, %s, %s)",
+                (run_id, code, old_row["dividend_forecast"], div),
+            )
+        conn.execute(
+            "INSERT INTO dividend_benefits(code, dividend_forecast,"
+            " dividend_auto) VALUES (%s, %s, %s)"
+            " ON CONFLICT (code) DO UPDATE SET"
+            " dividend_auto=EXCLUDED.dividend_auto,"
+            " dividend_forecast=EXCLUDED.dividend_forecast,"
+            " info_updated_on = CASE WHEN"
+            " dividend_benefits.dividend_forecast IS DISTINCT FROM"
+            " EXCLUDED.dividend_forecast THEN CURRENT_DATE"
+            " ELSE dividend_benefits.info_updated_on END",
+            (code, div, div),
+        )
+
+
 async def fetch_all(note="manual"):
     if _fetch_lock.locked():
         return
     async with _fetch_lock:
         with db() as conn:
+            # Targets: held stocks plus purchase candidates (candidates
+            # are refreshed too, but never enter the dividend master).
             targets = conn.execute(
-                "SELECT DISTINCT h.code, s.market FROM holdings h"
-                " JOIN stocks s ON s.code = h.code ORDER BY h.code"
+                "SELECT code, market FROM ("
+                " SELECT DISTINCT h.code, s.market FROM holdings h"
+                " JOIN stocks s ON s.code = h.code"
+                " UNION"
+                " SELECT c.code, s.market FROM candidates c"
+                " JOIN stocks s ON s.code = c.code"
+                ") ORDER BY code"
             ).fetchall()
+            holding_codes = {
+                r["code"]
+                for r in conn.execute(
+                    "SELECT DISTINCT code FROM holdings"
+                ).fetchall()
+            }
             run_id = conn.execute(
                 "INSERT INTO fetch_runs(started_at, note, total_count, done_count)"
                 " VALUES (now(), %s, %s, 0) RETURNING id",
@@ -249,89 +354,15 @@ async def fetch_all(note="manual"):
                     price, fields = parse_jp_page(r.text)
                     if price is None or price <= 0:
                         raise RuntimeError("price not found in page")
-                    div = fields.get("1株配当（会社予想）")
-                    volume = fields.get("出来高")
                     # The 01:00 batch reads the previous trading day's close;
                     # JST-9h maps the fetch moment to that trading day.
                     snap_date = (datetime.now(JST) - timedelta(hours=9)).date()
                     with db() as conn:
-                        conn.execute(
-                            "INSERT INTO price_points(code, captured_at, price, prev_close,"
-                            " day_high, day_low, volume, source)"
-                            " VALUES (%s, now(), %s, %s, %s, %s, %s, 'yahoo-jp')",
-                            (
-                                code,
-                                price,
-                                fields.get("前日終値"),
-                                fields.get("高値"),
-                                fields.get("安値"),
-                                int(volume) if volume is not None else None,
-                            ),
+                        _store_quote(
+                            conn, code, price, fields, snap_date,
+                            run_id=run_id,
+                            update_dividend=code in holding_codes,
                         )
-                        conn.execute(
-                            "INSERT INTO daily_snapshots(code, snap_date, close_price,"
-                            " prev_close, open_price, day_high, day_low, volume,"
-                            " market_cap_m, dividend_forecast, dividend_yield, per, pbr,"
-                            " captured_at, source)"
-                            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now(), 'yahoo-jp')"
-                            " ON CONFLICT (code, snap_date) DO UPDATE SET"
-                            " close_price=EXCLUDED.close_price,"
-                            " prev_close=EXCLUDED.prev_close,"
-                            " open_price=EXCLUDED.open_price, day_high=EXCLUDED.day_high,"
-                            " day_low=EXCLUDED.day_low, volume=EXCLUDED.volume,"
-                            " market_cap_m=EXCLUDED.market_cap_m,"
-                            " dividend_forecast=EXCLUDED.dividend_forecast,"
-                            " dividend_yield=EXCLUDED.dividend_yield, per=EXCLUDED.per,"
-                            " pbr=EXCLUDED.pbr, captured_at=now()",
-                            (
-                                code,
-                                snap_date,
-                                price,
-                                fields.get("前日終値"),
-                                fields.get("始値"),
-                                fields.get("高値"),
-                                fields.get("安値"),
-                                int(volume) if volume is not None else None,
-                                fields.get("時価総額"),
-                                div,
-                                fields.get("配当利回り（会社予想）"),
-                                fields.get("PER（会社予想）"),
-                                fields.get("PBR（実績）"),
-                            ),
-                        )
-                        if div is not None:
-                            old_row = conn.execute(
-                                "SELECT dividend_forecast FROM dividend_benefits"
-                                " WHERE code = %s",
-                                (code,),
-                            ).fetchone()
-                            if (
-                                old_row
-                                and old_row["dividend_forecast"] is not None
-                                and float(old_row["dividend_forecast"]) != float(div)
-                            ):
-                                conn.execute(
-                                    "INSERT INTO dividend_changes(run_id, code,"
-                                    " old_div, new_div) VALUES (%s, %s, %s, %s)",
-                                    (
-                                        run_id,
-                                        code,
-                                        old_row["dividend_forecast"],
-                                        div,
-                                    ),
-                                )
-                            conn.execute(
-                                "INSERT INTO dividend_benefits(code, dividend_forecast,"
-                                " dividend_auto) VALUES (%s, %s, %s)"
-                                " ON CONFLICT (code) DO UPDATE SET"
-                                " dividend_auto=EXCLUDED.dividend_auto,"
-                                " dividend_forecast=EXCLUDED.dividend_forecast,"
-                                " info_updated_on = CASE WHEN"
-                                " dividend_benefits.dividend_forecast IS DISTINCT FROM"
-                                " EXCLUDED.dividend_forecast THEN CURRENT_DATE"
-                                " ELSE dividend_benefits.info_updated_on END",
-                                (code, div, div),
-                            )
                         conn.commit()
                     ok += 1
                 except Exception as e:
@@ -393,6 +424,27 @@ async def fetch_all(note="manual"):
             logger.exception("Nikkei 225 fetch failed (run %s)", run_id)
         await _finish_run(run_id, ok, ng, first_error)
         emit_event("fetch.finished", run_id=run_id, kind=note, ok=ok, ng=ng)
+
+
+async def fetch_one_quote(code):
+    """Fetch one code right now (used when a purchase candidate is
+    registered). Tries the Tokyo suffix first, then Nagoya.
+    Returns (market, name, price, fields); raises RuntimeError when
+    the code cannot be fetched at all."""
+    async with httpx.AsyncClient(headers={"User-Agent": UA}, timeout=25) as client:
+        for suffix, market in (("T", "東証"), ("N", "名証")):
+            r = await client.get(
+                f"https://finance.yahoo.co.jp/quote/{code}.{suffix}"
+            )
+            if r.status_code == 404:
+                continue
+            if r.status_code != 200:
+                raise RuntimeError(f"HTTP {r.status_code}")
+            price, fields = parse_jp_page(r.text)
+            if price is None or price <= 0:
+                raise RuntimeError("price not found in page")
+            return market, parse_stock_name(r.text, code), price, fields
+    raise RuntimeError("銘柄が見つかりませんでした")
 
 
 async def _finish_run(run_id, ok, ng, first_error):
@@ -719,9 +771,16 @@ def summary(request: Request):
         )
     # Top movers: latest close vs previous close (previous snapshot date
     # when available, otherwise the snapshot's own prev_close).
+    # Held stocks only: purchase candidates share the snapshot table
+    # but are not part of the portfolio summary.
+    with db() as conn:
+        holding_codes = {
+            r["code"]
+            for r in conn.execute("SELECT DISTINCT code FROM holdings").fetchall()
+        }
     movers = []
     for code, s in snaps.items():
-        if code == "N225":
+        if code == "N225" or code not in holding_codes:
             continue
         close = fnum(s.get("close_price"))
         if prev_date and code in prev_snaps:
@@ -853,6 +912,53 @@ def create_sale(conn, *, code, name, buy_price, shares, purchase_date,
 
 def delete_sale(conn, sale_id):
     cur = conn.execute("DELETE FROM sales WHERE id = %s", (sale_id,))
+    return cur.rowcount > 0
+
+
+def list_candidate_rows(conn):
+    """Purchase candidates with their latest daily snapshot."""
+    return conn.execute(
+        """
+        SELECT c.code, c.added_at, s.name,
+               snap.snap_date, snap.close_price, snap.prev_close,
+               snap.dividend_forecast, snap.dividend_yield, snap.per, snap.pbr
+        FROM candidates c
+        LEFT JOIN stocks s ON s.code = c.code
+        LEFT JOIN LATERAL (
+            SELECT * FROM daily_snapshots d
+            WHERE d.code = c.code ORDER BY d.snap_date DESC LIMIT 1
+        ) snap ON true
+        ORDER BY c.added_at, c.code
+        """
+    ).fetchall()
+
+
+def candidate_exists(conn, code):
+    return (
+        conn.execute(
+            "SELECT 1 FROM candidates WHERE code = %s", (code,)
+        ).fetchone()
+        is not None
+    )
+
+
+def register_candidate(conn, code, market, name):
+    conn.execute(
+        "INSERT INTO stocks(code, name, market) VALUES (%s, %s, %s)"
+        " ON CONFLICT(code) DO UPDATE SET"
+        " name = COALESCE(EXCLUDED.name, stocks.name),"
+        " market = COALESCE(EXCLUDED.market, stocks.market)",
+        (code, name, market),
+    )
+    conn.execute(
+        "INSERT INTO candidates(code) VALUES (%s)"
+        " ON CONFLICT(code) DO NOTHING",
+        (code,),
+    )
+
+
+def delete_candidate(conn, code):
+    cur = conn.execute("DELETE FROM candidates WHERE code = %s", (code,))
     return cur.rowcount > 0
 
 
@@ -1264,6 +1370,98 @@ def api_settings_update(payload: SettingsIn):
     # Toggling the OTel integration takes effect without a restart.
     configure_otlp(payload.otel_enabled, payload.otel_endpoint)
     return view
+
+
+def _candidate_out(r):
+    close = fnum(r["close_price"])
+    prev = fnum(r["prev_close"])
+    change = change_pct = None
+    if close is not None and prev:
+        change = close - prev
+        change_pct = change / prev * 100
+    return dict(
+        code=r["code"], name=r["name"],
+        added_at=r["added_at"].isoformat() if r["added_at"] else None,
+        snap_date=_date_out(r["snap_date"]),
+        close_price=close, prev_close=prev,
+        change=change, change_pct=change_pct,
+        dividend_forecast=fnum(r["dividend_forecast"]),
+        dividend_yield=fnum(r["dividend_yield"]),
+        per=fnum(r["per"]), pbr=fnum(r["pbr"]),
+    )
+
+
+class CandidateIn(BaseModel):
+    code: str = Field(min_length=4, max_length=5, pattern=r"^[0-9A-Za-z]+$")
+
+
+class CandidateOut(BaseModel):
+    code: str
+    name: str | None
+    added_at: str | None
+    snap_date: date | None
+    close_price: float | None
+    prev_close: float | None
+    change: float | None
+    change_pct: float | None
+    dividend_forecast: float | None
+    dividend_yield: float | None
+    per: float | None
+    pbr: float | None
+
+
+@app.get("/candidates", response_class=HTMLResponse)
+def candidates_page(request: Request):
+    with db() as conn:
+        rows = [_candidate_out(r) for r in list_candidate_rows(conn)]
+    return templates.TemplateResponse(
+        request, "candidates.html", dict(rows=rows)
+    )
+
+
+@app.get("/api/v1/candidates", response_model=list[CandidateOut], tags=["candidates"])
+def api_candidates_list():
+    with db() as conn:
+        rows = list_candidate_rows(conn)
+    return [_candidate_out(r) for r in rows]
+
+
+@app.post("/api/v1/candidates", status_code=201, response_model=CandidateOut, tags=["candidates"])
+def api_candidates_create(payload: CandidateIn):
+    code = payload.code.strip().upper()
+    with db() as conn:
+        if candidate_exists(conn, code):
+            raise HTTPException(status_code=409, detail="already registered")
+    # Registration fetches the quote right away; a code that cannot be
+    # fetched at all is not registered.
+    try:
+        market, name, price, fields = asyncio.run(fetch_one_quote(code))
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=502, detail=f"銘柄情報を取得できませんでした: {e}"
+        )
+    if not name:
+        name = code  # title parse missed; stocks.name is NOT NULL
+    snap_date = (datetime.now(JST) - timedelta(hours=9)).date()
+    with db() as conn:
+        register_candidate(conn, code, market, name)
+        _store_quote(conn, code, price, fields, snap_date, update_dividend=False)
+        conn.commit()
+        row = [r for r in list_candidate_rows(conn) if r["code"] == code][0]
+    emit_event("candidate.added", code=code, name=name)
+    return _candidate_out(row)
+
+
+@app.delete("/api/v1/candidates/{code}", status_code=204, tags=["candidates"])
+def api_candidates_delete(code: str):
+    code = code.strip().upper()
+    with db() as conn:
+        deleted = delete_candidate(conn, code)
+        conn.commit()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="candidate not found")
+    emit_event("candidate.deleted", code=code)
+    return None
 
 
 @app.get("/data", response_class=HTMLResponse)

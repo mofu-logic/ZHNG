@@ -22,12 +22,15 @@ def test_openapi_document(client):
         "/api/v1/dividend-benefits",
         "/api/v1/dividend-benefits/{code}",
         "/api/v1/settings",
+        "/api/v1/candidates",
+        "/api/v1/candidates/{code}",
     ):
         assert p in paths, p
     schemas = doc["components"]["schemas"]
     for name in (
         "BuyIn", "BuyOut", "SaleIn", "SaleOut",
         "BenefitIn", "BenefitOut", "SettingsIn", "SettingsOut",
+        "CandidateIn", "CandidateOut",
     ):
         assert name in schemas, name
     # Requests and responses are described by the named schemas.
