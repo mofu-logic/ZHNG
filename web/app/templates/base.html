@@ -65,9 +65,8 @@
   .dlg-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
   .dlg-btns .dlg-cancel { background: #fff; color: #20304d; border: 1px solid #c9d1de; }
   .dlg-btns .dlg-danger { background: #c62f3b; border-color: #c62f3b; }
-  .memo-tip { position: relative; border-bottom: 1px dotted #7a879c; cursor: help; }
-  .memo-tip::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); width: 300px; white-space: pre-wrap; background: #20304d; color: #fff; font-size: 13px; font-weight: 400; line-height: 1.6; padding: 10px 12px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.25); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 30; text-align: left; }
-  .memo-tip:hover::after { opacity: 1; }
+  .memo-tip { border-bottom: 1px dotted #7a879c; cursor: help; }
+  .memo-tip-box { position: fixed; width: 300px; white-space: pre-wrap; background: #20304d; color: #fff; font-size: 13px; font-weight: 400; line-height: 1.6; padding: 10px 12px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.25); z-index: 200; pointer-events: none; text-align: left; }
   .preview-name { font-weight: 700; color: #20304d; }
   .preview-err { color: #c62f3b; }
 </style>
@@ -149,6 +148,34 @@
       ok.focus();
     });
   }
+
+  // Hover tooltip for truncated texts (.memo-tip). Rendered as a
+  // fixed-position box on <body>: an in-table tooltip would overflow
+  // the scrollable table wrapper and give it a vertical scrollbar.
+  let tipBox = null;
+  function hideTip() { if (tipBox) { tipBox.remove(); tipBox = null; } }
+  document.querySelectorAll('.memo-tip').forEach(el => {
+    el.addEventListener('mouseenter', () => {
+      hideTip();
+      tipBox = document.createElement('div');
+      tipBox.className = 'memo-tip-box';
+      tipBox.textContent = el.dataset.tip || '';
+      document.body.appendChild(tipBox);
+      const r = el.getBoundingClientRect();
+      let top = r.bottom + 6;
+      if (top + tipBox.offsetHeight > window.innerHeight - 8) {
+        top = Math.max(8, r.top - tipBox.offsetHeight - 6);
+      }
+      let left = r.left;
+      if (left + tipBox.offsetWidth > window.innerWidth - 8) {
+        left = window.innerWidth - tipBox.offsetWidth - 8;
+      }
+      tipBox.style.top = top + 'px';
+      tipBox.style.left = left + 'px';
+    });
+    el.addEventListener('mouseleave', hideTip);
+  });
+  window.addEventListener('scroll', hideTip, true);
 
   function strOrNull(v) { v = (v || '').trim(); return v === '' ? null : v; }
   function numOrNull(v) { return v === '' || v == null ? null : Number(v); }
