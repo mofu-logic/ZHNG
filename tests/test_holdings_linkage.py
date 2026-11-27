@@ -31,7 +31,7 @@ the holding no longer exists after the event.
 """
 import pytest
 from conftest import seed_stock_holding
-from test_fetch import make_fake_client
+from test_fetch import FakeResponse, make_fake_client
 from test_parse import JP_PAGE
 
 from app import main
@@ -658,3 +658,155 @@ def test_history_page_linkage_ui(client, db):
     assert client.post(f"/api/v1/buys/{linked['id']}/cancel").status_code == 200
     page = client.get("/history").text
     assert "取消済み" in page
+
+
+# ------------------------------------- named buys still fetch the master
+
+
+def _nagoya_fake_client():
+    base = make_fake_client()
+
+    class NagoyaClient(base):
+        async def get(self, url):
+            if "/7777.T" in url:
+                return FakeResponse(404, "not found")
+            r = await super().get(url)
+            if "/7777." in url and r.status_code == 200:
+                return type(r)(200, UNKNOWN_CODE_PAGE)
+            return r
+
+    return NagoyaClient
+
+
+def test_buy_named_unknown_code_fetches_stock_info(client, db, monkeypatch):
+    # A name in the payload must not bypass the Yahoo fetch when the
+    # buy links: the stock master needs the fetched name and market
+    # (a market-less master row would fail every nightly fetch).
+    # buy_lots itself keeps the name as supplied.
+    monkeypatch.setattr(main.httpx, "AsyncClient", _named_fake_client())
+    r = client.post(
+        "/api/v1/buys",
+        json={
+            "code": "7777",
+            "name": "入力した名前",
+            "avg_price": 900,
+            "shares": 10,
+            "status": "約定済",
+            "account_type": "特定",
+        },
+    )
+    assert r.status_code == 201
+    assert r.json()["name"] == "入力した名前"
+    stock = db.execute(
+        "SELECT name, market FROM stocks WHERE code = '7777'"
+    ).fetchone()
+    assert stock is not None
+    assert stock["name"] == "テスト候補(株)"
+    assert stock["market"] == "東証"
+    holding = _holding(db, code="7777")
+    assert holding is not None
+    assert holding["shares"] == 10
+    assert float(holding["avg_price"]) == 900.0
+    assert len(_events(db)) == 1
+
+
+def test_buy_named_unknown_code_nagoya_market(client, db, monkeypatch):
+    # The market comes from the fetched page, so a code listed only
+    # in Nagoya registers as 名証 (not NULL, not 東証).
+    monkeypatch.setattr(main.httpx, "AsyncClient", _nagoya_fake_client())
+    r = client.post(
+        "/api/v1/buys",
+        json={
+            "code": "7777",
+            "name": "入力した名前",
+            "avg_price": 900,
+            "shares": 10,
+            "status": "約定済",
+            "account_type": "特定",
+        },
+    )
+    assert r.status_code == 201
+    stock = db.execute(
+        "SELECT name, market FROM stocks WHERE code = '7777'"
+    ).fetchone()
+    assert stock is not None
+    assert stock["market"] == "名証"
+
+
+def test_buy_named_unknown_code_fetch_failure_is_502(client, db, monkeypatch):
+    # With a name supplied the fetch failure is still a 502 and
+    # nothing is registered (no buy, no master row, no holding,
+    # no event).
+    monkeypatch.setattr(
+        main.httpx, "AsyncClient", make_fake_client(fail_codes=("0000",))
+    )
+    r = client.post(
+        "/api/v1/buys",
+        json={
+            "code": "0000",
+            "name": "入力した名前",
+            "avg_price": 900,
+            "shares": 10,
+            "status": "約定済",
+            "account_type": "特定",
+        },
+    )
+    assert r.status_code == 502
+    assert db.execute("SELECT count(*) c FROM buy_lots").fetchone()["c"] == 0
+    assert db.execute("SELECT count(*) c FROM stocks").fetchone()["c"] == 0
+    assert db.execute("SELECT count(*) c FROM holdings").fetchone()["c"] == 0
+    assert _events(db) == []
+
+
+def test_buy_named_unknown_code_without_linkage_skips_fetch(
+    client, db, monkeypatch
+):
+    # Without linkage (no account type), registration keeps the
+    # existing behavior: no Yahoo fetch happens, so even a code
+    # that could not be fetched registers as before.
+    monkeypatch.setattr(
+        main.httpx, "AsyncClient", make_fake_client(fail_codes=("0000",))
+    )
+    r = client.post(
+        "/api/v1/buys",
+        json={
+            "code": "0000",
+            "name": "入力した名前",
+            "avg_price": 900,
+            "shares": 10,
+            "status": "約定済",
+        },
+    )
+    assert r.status_code == 201
+    assert _events(db) == []
+
+
+# --------------------------- sale reversal restores the other columns
+
+
+def test_cancel_sale_restores_lent_ordered_custody(client, db):
+    # A sale of every share deletes the holdings row; the event must
+    # remember lent/ordered/custody so cancelling the sale brings
+    # the row back with those columns intact, not just shares/price.
+    seed_stock_holding(db)  # 特定: 100 shares @ 800
+    db.execute(
+        "UPDATE holdings SET lent_shares = 10, ordered_shares = 5,"
+        " custody_type = '代用' WHERE code = '9999'"
+    )
+    db.commit()
+    sale_id = _sale(client, executed_shares=100).json()["id"]
+    assert _holding(db) is None
+    ev = _events(db)[0]
+    assert ev["lent_shares_before"] == 10
+    assert ev["ordered_shares_before"] == 5
+    assert ev["custody_type_before"] == "代用"
+
+    r = client.post(f"/api/v1/sales/{sale_id}/cancel")
+    assert r.status_code == 200
+    holding = _holding(db)
+    assert holding is not None
+    assert holding["shares"] == 100
+    assert float(holding["avg_price"]) == 800.0
+    assert holding["lent_shares"] == 10
+    assert holding["ordered_shares"] == 5
+    assert holding["custody_type"] == "代用"
