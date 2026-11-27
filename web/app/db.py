@@ -29,16 +29,19 @@ def _load_schema() -> str:
 SCHEMA = _load_schema()
 
 
-# 設定の後方互換の掃除で使う旧名。整理の方針として旧名そのものは
-# ソースに残さないため、分割して組み立てる。
+# 設定の後方互換の掃除専用の旧名。旧名を名指しすること自体がこの
+# 掃除の仕事なので、ここでは素直なリテラルで持つ。通常の経路
+# （設定の読み書き・表示・保存）では旧名を使わず、旧名が現れるのは
+# この定数定義だけであることをテストで固定している。
 # - 評価額ベース利回りの目標値の旧キー（新キーは settings 側の
-#   target_yield_portfolio）。
+#   target_yield_portfolio）。旧キーがある DB では値を新キーへ
+#   引き継いで旧キーの行を消す。
 # - 一度きりの移行（created_on バックフィル／方針コピー）の完了
 #   フラグ。移行コードは削除済みで、残っているフラグ行だけを消す。
-_LEGACY_YIELD_KEY = "target_yield_" + "value"
+_LEGACY_YIELD_KEY = "target_yield_value"
 _LEGACY_FLAG_KEYS = (
-    "master_created_on_" + "backfilled",
-    "policy_master_" + "migrated",
+    "master_created_on_backfilled",
+    "policy_master_migrated",
 )
 
 
