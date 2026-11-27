@@ -19,6 +19,7 @@ from typing import Annotated
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, StringConstraints
 
@@ -166,6 +167,15 @@ app = FastAPI(
         "JSON API（/api/v1）。画面と外部連携で同一の IF を使う。"
         "このドキュメントは OpenAPI 仕様として /openapi.json でも取得できる。"
     ),
+)
+
+# Shared stylesheet (web/app/static/app.css, DESIGN.md section 9):
+# the common CSS lives in one static file instead of an inline
+# <style> block in base.html, and pages link it at /static/app.css.
+app.mount(
+    "/static",
+    StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")),
+    name="static",
 )
 
 
