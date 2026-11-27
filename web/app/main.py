@@ -335,7 +335,7 @@ def dashboard(request: Request):
         target_monthly=st.get("target_monthly_income"),
         target_y_buy=st.get("target_yield_buy"),
         target_y_now=st.get("target_yield_now"),
-        target_y_value=st.get("target_yield_value", 0.04),
+        target_y_value=st.get("target_yield_portfolio", 0.04),
     )
     policies = sorted({i["policy"] for i in items if i["policy"]})
     accounts = sorted({i["account_type"] for i in items if i["account_type"]})
@@ -734,7 +734,7 @@ class SettingsIn(BaseModel):
     target_dividend_total: float
     target_yield_buy_pct: float
     target_yield_now_pct: float
-    target_yield_value_pct: float
+    target_yield_portfolio_pct: float
     log_retention_days: int = Field(default=90, ge=1, le=3650)
     otel_enabled: bool = False
     otel_endpoint: str | None = None
@@ -802,7 +802,7 @@ class SettingsOut(BaseModel):
     target_monthly_income: int
     target_yield_buy_pct: float
     target_yield_now_pct: float
-    target_yield_value_pct: float
+    target_yield_portfolio_pct: float
     log_retention_days: int
     otel_enabled: bool
     otel_endpoint: str

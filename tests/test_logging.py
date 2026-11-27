@@ -219,7 +219,7 @@ def test_settings_update_event(client, db):
             "target_dividend_total": 1200000,
             "target_yield_buy_pct": 3.0,
             "target_yield_now_pct": 3.5,
-            "target_yield_value_pct": 4.0,
+            "target_yield_portfolio_pct": 4.0,
         },
     )
     rows = _rows(db, "settings.updated")

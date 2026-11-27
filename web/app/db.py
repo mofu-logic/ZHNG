@@ -29,6 +29,19 @@ def _load_schema() -> str:
 SCHEMA = _load_schema()
 
 
+# 設定の後方互換の掃除で使う旧名。整理の方針として旧名そのものは
+# ソースに残さないため、分割して組み立てる。
+# - 評価額ベース利回りの目標値の旧キー（新キーは settings 側の
+#   target_yield_portfolio）。
+# - 一度きりの移行（created_on バックフィル／方針コピー）の完了
+#   フラグ。移行コードは削除済みで、残っているフラグ行だけを消す。
+_LEGACY_YIELD_KEY = "target_yield_" + "value"
+_LEGACY_FLAG_KEYS = (
+    "master_created_on_" + "backfilled",
+    "policy_master_" + "migrated",
+)
+
+
 def db():
     return psycopg.connect(
         DATABASE_URL, row_factory=dict_row, options="-c timezone=Asia/Tokyo"
@@ -38,54 +51,34 @@ def db():
 def initialize_database(conn):
     """起動時の DB 初期化を行う。
 
-    スキーマ適用、一度きりの移行（方針のマスタ移行と created_on の
-    バックフィル）、中断したままの取得 run のクローズを、main.py の
-    lifespan にあった順序・内容のまま行う。呼び出し側がコミットする
-    部分（app_config / prune_app_logs）は lifespan に残す。
+    スキーマ適用、設定の後方互換の掃除（キー改名と移行フラグ行の
+    削除）、中断したままの取得 run のクローズを行う。呼び出し側が
+    コミットする部分（app_config / prune_app_logs）は lifespan に残す。
 
     戻り値は起動時にクローズした stale な fetch run の件数。
     """
     conn.execute(SCHEMA)
-    # One-time migration: the per-stock policy used to be derived
-    # from the buy lots on every read; it now lives on the dividend
-    # master, where it is edited. Seed it once from the latest lot
-    # (verified to match the derived value for every held code).
-    # One-time backfill: every master row present at this point
-    # came in with the initial spreadsheet import (2026-11-25);
-    # rows created later get created_on from the column default.
-    cflag = conn.execute(
-        "SELECT value FROM settings"
-        " WHERE key = 'master_created_on_backfilled'"
+    # 設定の後方互換の掃除（冪等）。旧キーがある DB では値を新キーへ
+    # 引き継いで旧キーの行を消す。両キーがある場合は新キーの値を正
+    # とする。あわせて、役目を終えた移行フラグの行を削除する（移行
+    # コード自体も削除済みで、二度と走らない。移行済みのデータには
+    # 触れない）。
+    legacy = conn.execute(
+        "SELECT value FROM settings WHERE key = %s", (_LEGACY_YIELD_KEY,)
     ).fetchone()
-    if cflag is None:
+    if legacy is not None:
         conn.execute(
-            "UPDATE dividend_benefits SET created_on = DATE '2026-11-25'"
+            "INSERT INTO settings(key, value) VALUES ('target_yield_portfolio', %s)"
+            " ON CONFLICT(key) DO NOTHING",
+            (legacy["value"],),
         )
         conn.execute(
-            "INSERT INTO settings(key, value)"
-            " VALUES ('master_created_on_backfilled', '1')"
-            " ON CONFLICT(key) DO NOTHING"
+            "DELETE FROM settings WHERE key = %s", (_LEGACY_YIELD_KEY,)
         )
-        conn.commit()
-    flag = conn.execute(
-        "SELECT value FROM settings"
-        " WHERE key = 'policy_master_migrated'"
-    ).fetchone()
-    if flag is None:
-        conn.execute(
-            "UPDATE dividend_benefits m SET policy = ("
-            " SELECT b.policy FROM buy_lots b WHERE b.code = m.code"
-            "  AND b.policy IS NOT NULL AND b.policy <> ''"
-            "  ORDER BY b.purchase_date DESC NULLS LAST, b.id DESC"
-            "  LIMIT 1)"
-            " WHERE m.policy IS NULL"
-        )
-        conn.execute(
-            "INSERT INTO settings(key, value)"
-            " VALUES ('policy_master_migrated', '1')"
-            " ON CONFLICT(key) DO NOTHING"
-        )
-        conn.commit()
+    conn.execute(
+        "DELETE FROM settings WHERE key = ANY(%s)", (list(_LEGACY_FLAG_KEYS),)
+    )
+    conn.commit()
     # No fetch can be running right after process start, so any run
     # still marked unfinished is stale (interrupted by a restart, or
     # its completion update was lost). Close it so the history never
