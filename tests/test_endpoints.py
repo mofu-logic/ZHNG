@@ -164,22 +164,23 @@ def test_history_page_numeric_inputs_have_min_zero(client, db):
     # The API rejects negative quantities/prices with 422, but the form
     # must stop the user from typing them in the first place: every
     # numeric input in the buy and sell forms carries min="0".
-    # Profit is the exception -- a loss is negative by design, so its
-    # input must stay unbounded below.
+    # The sell form no longer asks for buy_price or profit at all --
+    # the buy price is filled from the holding's average and the
+    # profit is always derived -- so those inputs must be absent
+    # rather than merely unbounded below.
     page = client.get("/history").text
     inputs = {}
     for tag in re.findall(r"<input[^>]*>", page):
         m = re.search(r'name="([^"]+)"', tag)
         if m:
             inputs.setdefault(m.group(1), []).append(tag)
-    for field in ("avg_price", "shares", "buy_price", "sell_price",
+    for field in ("avg_price", "shares", "sell_price",
                   "sell_shares", "executed_shares"):
         assert field in inputs, field
         for tag in inputs[field]:
             assert 'min="0"' in tag, tag
-    assert "profit" in inputs
-    for tag in inputs["profit"]:
-        assert "min=" not in tag, tag
+    assert "buy_price" not in inputs
+    assert "profit" not in inputs
 
 
 def test_settings_monthly_target_is_derived(client, db):

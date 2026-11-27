@@ -311,6 +311,18 @@ def create_sale(conn, *, code, name, buy_price, shares, purchase_date,
                 sell_price, sell_shares, executed_shares, order_start_date,
                 executed_date, profit, status, memo, account_type=None):
     ex = executed_shares or 0
+    holding = None
+    if account_type is not None:
+        # The named account's holding is read once, before anything
+        # moves it: it supplies the average price a sale without an
+        # explicit buy price derives from, and the coverage check
+        # for the executed shares below.
+        holding = _holding_row(conn, code, account_type)
+    if buy_price is None and holding is not None \
+            and holding["avg_price"] is not None:
+        # No buy price was sent: the holding's average price, as it
+        # stands before this sale, is what the profit derives from.
+        buy_price = float(holding["avg_price"])
     pf = profit
     if pf is None and buy_price is not None and sell_price is not None and ex:
         pf = (sell_price - buy_price) * ex
@@ -322,12 +334,10 @@ def create_sale(conn, *, code, name, buy_price, shares, purchase_date,
             status = "一部約定"
         else:
             status = "注文中"
-    holding = None
     if account_type is not None and ex > 0:
         # The sale links by its executed shares: the holding for
         # this exact account must cover them, otherwise the sale
         # itself is refused (LinkageError -> 422, nothing stored).
-        holding = _holding_row(conn, code, account_type)
         if holding is None or holding["shares"] < ex:
             raise LinkageError(
                 "約定株数が保有株数を超えているため、売却を登録できません"
@@ -342,7 +352,7 @@ def create_sale(conn, *, code, name, buy_price, shares, purchase_date,
          sell_shares, ex, order_start_date, executed_date, pf, status,
          memo, account_type),
     ).fetchone()
-    if holding is not None:
+    if holding is not None and ex > 0:
         _apply_sale_linkage(conn, row, holding)
     return row
 
