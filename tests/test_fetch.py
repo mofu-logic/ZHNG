@@ -340,3 +340,93 @@ def test_fetch_stores_industry_once(fake_fetch, db, monkeypatch):
     # Fresh industries are not refetched on the next run.
     asyncio.run(main.fetch_all())
     assert hits["profile"] == 2
+
+
+class _ProgressFailingConnection:
+    """Wraps a real connection; only the done_count progress UPDATE fails.
+
+    The per-code quote store, the industry update and _finish_run all go
+    through main.db too, so the failure is keyed on the progress UPDATE
+    text itself. This simulates a transient DB failure hitting exactly
+    the progress update that lives outside the per-code try in fetch_all.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def __enter__(self):
+        self._conn.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._conn.__exit__(*exc)
+
+    def execute(self, query, params=None, **kwargs):
+        if isinstance(query, str) and "done_count = done_count + 1" in query:
+            raise RuntimeError("progress update failed (simulated DB error)")
+        return self._conn.execute(query, params, **kwargs)
+
+    def commit(self):
+        return self._conn.commit()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def _progress_failing_db(real_db):
+    def failing_db():
+        return _ProgressFailingConnection(real_db())
+
+    return failing_db
+
+
+def test_fetch_all_progress_update_failure_does_not_stop_batch(
+    db, fake_fetch, monkeypatch
+):
+    # R1: the done_count progress UPDATE sits outside the per-code try,
+    # so a DB failure there used to escape fetch_all, skipping the
+    # remaining codes and _finish_run (the run stayed "running").
+    # A progress-update failure is not a per-code failure: both quotes
+    # were fetched and stored, so ok must stay 2 and ng 0.
+    _seed_two_stocks(db)
+    fake_fetch()
+    monkeypatch.setattr(main, "db", _progress_failing_db(main.db))
+    try:
+        asyncio.run(main.fetch_all("batch"))
+    except RuntimeError:
+        pass  # the error itself may escape; the run must still finish
+    run = db.execute("SELECT * FROM fetch_runs").fetchone()
+    assert run["finished_at"] is not None
+    assert run["ok_count"] == 2
+    assert run["ng_count"] == 0
+    prices = db.execute(
+        "SELECT code FROM price_points ORDER BY code"
+    ).fetchall()
+    assert [p["code"] for p in prices] == ["8888", "9999"]
+
+
+def test_fetch_all_unexpected_loop_error_still_finishes_run(
+    db, fake_fetch, monkeypatch
+):
+    # R1: even an unexpected error escaping the per-code try (here the
+    # per-code pacing sleep, 25-45s, which sits outside the try) must
+    # not leave the run "running": _finish_run belongs in a finally.
+    # The industry sleep (3-8s) and _finish_run retries (2s) are left
+    # alone so only the pacing sleep fails.
+    _seed_two_stocks(db)
+    fake_fetch()
+
+    async def pacing_sleep(delay, *a, **k):
+        if delay > 20:
+            raise RuntimeError("pacing sleep failed (simulated)")
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", pacing_sleep)
+    try:
+        asyncio.run(main.fetch_all("batch"))
+    except RuntimeError:
+        pass  # the error itself may still propagate; the run must finish
+    run = db.execute("SELECT * FROM fetch_runs").fetchone()
+    assert run["finished_at"] is not None
+    assert run["ok_count"] == 1  # 8888 stored before the pacing sleep
+    assert run["ng_count"] == 0
