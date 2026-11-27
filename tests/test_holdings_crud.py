@@ -449,3 +449,74 @@ def test_dashboard_holdings_controls(client, db):
     assert "削除" in page
     assert "/api/v1/holdings" in page
     assert "/events" in page
+
+
+# ------------------------------------------------- mixed manual / linkage
+# The "latest unreversed event" of a holding is judged across
+# every event kind, not just buy/sell: a manual add on top of a
+# sale blocks the sale's cancel (the re-added row must not be
+# overwritten by the sale's before-state), the re-added row
+# itself deletes freely (its newest change is the manual add, not
+# the old sale), and a manual delete is itself a later change, so
+# the sale stays blocked even after the re-added row is deleted.
+
+
+def test_delete_readded_holding_after_full_sale(client, db):
+    seed_stock_holding(db)  # 100 @ 800
+    _sale(client, sell_shares=100, executed_shares=100)
+    assert _holding(db) is None
+    created = _add(client, avg_price=900, shares=50).json()
+    r = client.delete(f"/api/v1/holdings/{created['id']}")
+    assert r.status_code == 204
+    assert _holding(db) is None
+    assert [e["kind"] for e in _events(db)] == ["sell", "add", "delete"]
+
+
+def test_cancel_sale_blocked_by_manual_readd(client, db):
+    seed_stock_holding(db)
+    sale = _sale(client, sell_shares=100, executed_shares=100).json()
+    assert _holding(db) is None
+    _add(client, avg_price=900, shares=50)
+    r = client.post(f"/api/v1/sales/{sale['id']}/cancel")
+    assert r.status_code == 409
+    # The manually re-added holding is untouched, and the sale is
+    # not marked cancelled.
+    holding = _holding(db)
+    assert holding["shares"] == 50
+    assert float(holding["avg_price"]) == 900.0
+    sales = client.get("/api/v1/sales").json()
+    assert sales[0]["cancelled_at"] is None
+    assert [e["kind"] for e in _events(db)] == ["sell", "add"]
+
+
+def test_cancel_sale_still_blocked_after_readded_row_deleted(client, db):
+    seed_stock_holding(db)
+    sale = _sale(client, sell_shares=100, executed_shares=100).json()
+    created = _add(client, avg_price=900, shares=50).json()
+    assert client.delete(f"/api/v1/holdings/{created['id']}").status_code == 204
+    # The manual delete counts as a later change on this holding,
+    # so the sale cannot be cancelled over it either.
+    r = client.post(f"/api/v1/sales/{sale['id']}/cancel")
+    assert r.status_code == 409
+    assert _holding(db) is None
+    assert [e["kind"] for e in _events(db)] == ["sell", "add", "delete"]
+
+
+def test_delete_blocked_by_buy_on_manual_add_until_cancelled(client, db):
+    _seed_stock_only(db)
+    _add(client)  # manual: 100 @ 800
+    buy = _buy(client, avg_price=1000, shares=50).json()  # -> 150 shares
+    holding = _holding(db)
+    assert holding["shares"] == 150
+    # The newest change is the buy linkage: the delete is blocked.
+    r = client.delete(f"/api/v1/holdings/{holding['id']}")
+    assert r.status_code == 409
+    # After cancelling the buy, the newest unreversed change is
+    # the manual add again, and the delete goes through.
+    assert client.post(f"/api/v1/buys/{buy['id']}/cancel").status_code == 200
+    holding = _holding(db)
+    assert holding["shares"] == 100
+    assert float(holding["avg_price"]) == 800.0
+    r = client.delete(f"/api/v1/holdings/{holding['id']}")
+    assert r.status_code == 204
+    assert _holding(db) is None
