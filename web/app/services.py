@@ -13,7 +13,7 @@ import io
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
-from app.config import JST, TRADE_STATUSES
+from app.config import ACCOUNT_TYPES, JST, TRADE_STATUSES
 
 
 class LinkageError(Exception):
@@ -572,7 +572,9 @@ def parse_import_row(cells):
 
     The result carries only the mapped items (plus code and
     account_type, which always resolve: an unmapped or empty
-    account means 特定）. Numbers may carry comma separators.
+    account means 特定, and a named account outside the allowlist
+    (ACCOUNT_TYPES) is a row error. Numbers may carry comma
+    separators.
     avg_price comes back as a Decimal so the weighted average in
     "add" mode stays exact. Raises ImportRowError with the reason
     when the row cannot be imported.
@@ -581,8 +583,14 @@ def parse_import_row(cells):
     if not code:
         raise ImportRowError("銘柄コードが空です")
     values = {"code": code}
-    account = (cells.get("account_type") or "").strip()
-    values["account_type"] = account or "特定"
+    account = (cells.get("account_type") or "").strip() or "特定"
+    if account not in ACCOUNT_TYPES:
+        raise ImportRowError(
+            "口座区分が不正です（"
+            + "・".join(ACCOUNT_TYPES)
+            + f"のいずれか）: {account}"
+        )
+    values["account_type"] = account
     if "avg_price" in cells:
         cell = (cells["avg_price"] or "").replace(",", "").strip()
         try:

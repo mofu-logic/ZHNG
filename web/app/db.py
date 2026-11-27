@@ -7,18 +7,24 @@ main.py にあったものをそのまま移したもので、振る舞いは変
 import psycopg
 from psycopg.rows import dict_row
 
-from app.config import DATABASE_URL
+from app.config import ACCOUNT_TYPES, DATABASE_URL
 
-SCHEMA = """
+_ACCOUNT_TYPE_LIST_SQL = ", ".join(f"'{t}'" for t in ACCOUNT_TYPES)
+
+SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS stocks(
   code text PRIMARY KEY, name text NOT NULL, market text);
 CREATE TABLE IF NOT EXISTS holdings(
-  id serial PRIMARY KEY, code text NOT NULL, account_type text, custody_type text,
+  id serial PRIMARY KEY, code text NOT NULL,
+  account_type text NOT NULL
+    CONSTRAINT holdings_account_type_allowlist
+    CHECK (account_type IN ({_ACCOUNT_TYPE_LIST_SQL})),
+  custody_type text,
   avg_price numeric NOT NULL, shares integer NOT NULL,
   lent_shares integer DEFAULT 0, ordered_shares integer DEFAULT 0,
   updated_at timestamptz DEFAULT now());
 CREATE UNIQUE INDEX IF NOT EXISTS holdings_code_account_uidx
-  ON holdings (code, account_type) WHERE account_type IS NOT NULL;
+  ON holdings (code, account_type);
 CREATE TABLE IF NOT EXISTS buy_lots(
   id serial PRIMARY KEY, code text, name text, avg_price numeric, shares integer,
   purchase_date date, policy text, trigger_note text, note text,
@@ -67,7 +73,10 @@ CREATE TABLE IF NOT EXISTS benefit_memos(
   form_arrival_1 date, form_arrival_2 date,
   item_arrival_1 date, item_arrival_2 date);
 CREATE TABLE IF NOT EXISTS holding_events(
-  id serial PRIMARY KEY, code text NOT NULL, account_type text,
+  id serial PRIMARY KEY, code text NOT NULL,
+  account_type text NOT NULL
+    CONSTRAINT holding_events_account_type_allowlist
+    CHECK (account_type IN ({_ACCOUNT_TYPE_LIST_SQL})),
   kind text NOT NULL, source_type text NOT NULL, source_id integer,
   delta_shares integer NOT NULL,
   shares_before integer NOT NULL, shares_after integer NOT NULL,
@@ -89,6 +98,53 @@ ALTER TABLE dividend_benefits ADD COLUMN IF NOT EXISTS policy text;
 ALTER TABLE dividend_benefits ADD COLUMN IF NOT EXISTS created_on date DEFAULT CURRENT_DATE;
 ALTER TABLE stocks ADD COLUMN IF NOT EXISTS industry text;
 ALTER TABLE stocks ADD COLUMN IF NOT EXISTS industry_fetched_on date;
+-- 口座区分の移行（既存DB向け。すべて冪等で、起動のたびに走っても
+-- 安全な形にしてある）。口座区分は許可リスト（ACCOUNT_TYPES）の
+-- 値だけを許し、保有とその変更記録では NULL を許さない。買い・
+-- 売り履歴では NULL（保有に連動しない印）は従来どおり許す。
+-- SET NOT NULL は繰り返し実行してもエラーにならない。
+ALTER TABLE holdings ALTER COLUMN account_type SET NOT NULL;
+ALTER TABLE holding_events ALTER COLUMN account_type SET NOT NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'holdings_account_type_allowlist') THEN
+    ALTER TABLE holdings ADD CONSTRAINT holdings_account_type_allowlist
+      CHECK (account_type IN ({_ACCOUNT_TYPE_LIST_SQL}));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'holding_events_account_type_allowlist') THEN
+    ALTER TABLE holding_events
+      ADD CONSTRAINT holding_events_account_type_allowlist
+      CHECK (account_type IN ({_ACCOUNT_TYPE_LIST_SQL}));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'buy_lots_account_type_allowlist') THEN
+    ALTER TABLE buy_lots ADD CONSTRAINT buy_lots_account_type_allowlist
+      CHECK (account_type IS NULL
+             OR account_type IN ({_ACCOUNT_TYPE_LIST_SQL}));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'sales_account_type_allowlist') THEN
+    ALTER TABLE sales ADD CONSTRAINT sales_account_type_allowlist
+      CHECK (account_type IS NULL
+             OR account_type IN ({_ACCOUNT_TYPE_LIST_SQL}));
+  END IF;
+END $$;
+-- 一意インデックスは部分インデックス（口座区分が NULL の行を対象
+-- 外にする旧定義）から通常の一意インデックスへ張り替える。
+-- CREATE ... IF NOT EXISTS では既存の部分定義は置き換わらないため、
+-- 部分定義のときだけ落としてから作り直す。
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_indexes
+             WHERE indexname = 'holdings_code_account_uidx'
+               AND indexdef LIKE '%WHERE%') THEN
+    DROP INDEX holdings_code_account_uidx;
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS holdings_code_account_uidx
+  ON holdings (code, account_type);
 """
 
 
