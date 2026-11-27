@@ -21,7 +21,11 @@ What changes:
   price becomes the sale's buy_price and the profit is derived from
   it. With no holding (or no account type) buy_price and profit
   stay NULL. Explicitly sent buy_price / profit keep winning.
-- The history tables themselves do not change.
+- The history tables themselves do not change in this PR.
+  Follow-up (owner decision): the account type is hidden on the
+  history screen -- no form input and no table column -- while the
+  API and the holdings linkage keep using it. The form tests below
+  pin that as well; see tests/test_history_account_type_ui.py.
 """
 import re
 
@@ -82,10 +86,12 @@ def test_buy_form_has_no_name_input(client, db):
     page = client.get("/history").text
     names = _form_names(page, "buy-form")
     assert "name" not in names
+    # The account type is not asked on this screen either: it stays
+    # an API-level field (see test_history_account_type_ui.py).
+    assert "account_type" not in names
     # Everything else the buy table shows stays an input.
     for field in ("code", "avg_price", "shares", "purchase_date",
-                  "policy", "trigger_note", "note", "status",
-                  "account_type"):
+                  "policy", "trigger_note", "note", "status"):
         assert field in names, field
 
 
@@ -96,11 +102,11 @@ def test_sell_form_drops_filled_and_unlisted_inputs(client, db):
     # purchase_date never appear in the sell table; profit is
     # always derived now.
     for field in ("name", "buy_price", "shares", "purchase_date",
-                  "profit"):
+                  "profit", "account_type"):
         assert field not in names, field
     for field in ("code", "sell_price", "sell_shares",
                   "executed_shares", "order_start_date",
-                  "executed_date", "status", "memo", "account_type"):
+                  "executed_date", "status", "memo"):
         assert field in names, field
 
 
@@ -108,17 +114,17 @@ def test_forms_do_not_submit_removed_fields(client, db):
     page = client.get("/history").text
     buy_js = _handler_js(page, "buy-form", "getElementById('sell-form')")
     assert "f.get('name')" not in buy_js
+    assert "f.get('account_type')" not in buy_js
     for kept in ("code", "avg_price", "shares", "purchase_date",
-                 "policy", "trigger_note", "note", "status",
-                 "account_type"):
+                 "policy", "trigger_note", "note", "status"):
         assert f"f.get('{kept}')" in buy_js, kept
     sell_js = _handler_js(page, "sell-form", "location.hash = 'sell'")
     for removed in ("name", "buy_price", "shares", "purchase_date",
-                    "profit"):
+                    "profit", "account_type"):
         assert f"f.get('{removed}')" not in sell_js, removed
     for kept in ("code", "sell_price", "sell_shares",
                  "executed_shares", "order_start_date",
-                 "executed_date", "status", "memo", "account_type"):
+                 "executed_date", "status", "memo"):
         assert f"f.get('{kept}')" in sell_js, kept
 
 
