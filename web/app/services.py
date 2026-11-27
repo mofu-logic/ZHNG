@@ -8,8 +8,10 @@ db.py と config.py にのみ依存する（循環 import を作らない）。
 関数は接続済みの conn を受け取り、呼び出し側がコミットする。
 """
 
+import csv
+import io
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from app.config import JST, TRADE_STATUSES
 
@@ -463,6 +465,223 @@ def list_holding_events(conn, code, account_type):
         " WHERE code = %s AND account_type = %s ORDER BY id DESC",
         (code, account_type),
     ).fetchall()
+
+
+# ------------------------------------------------------------ holdings CSV import
+# The bulk counterpart of the manual add: a broker holdings CSV is
+# mapped onto holdings columns (each item named by header text or by
+# 1-based column number) and applied row by row in one of three
+# modes. Creations and changes are recorded as holding_events with
+# kind / source_type "import", so an import sits on the same ledger
+# (and the same rollback stack) as every other change.
+
+
+class ImportFormatError(Exception):
+    """The uploaded file cannot be imported at all (the caller
+    turns this into a 422 and nothing is imported)."""
+
+
+class ImportRowError(Exception):
+    """One CSV row cannot be imported; the row is reported in the
+    result's failures and the remaining rows still go through."""
+
+
+#: The items a CSV column can be mapped onto, in form-field order.
+IMPORT_FIELDS = (
+    "code", "account_type", "avg_price", "shares",
+    "lent_shares", "ordered_shares", "custody_type",
+)
+
+_IMPORT_INT_FIELDS = (
+    ("shares", "株数"), ("lent_shares", "貸株数"), ("ordered_shares", "発注数"),
+)
+
+
+def decode_import_text(raw):
+    """Decode an uploaded CSV: UTF-8 (BOM tolerated) first, then
+    Shift_JIS (cp932, what Japanese brokers and Excel produce).
+    Returns None when neither encoding can read the bytes."""
+    for encoding in ("utf-8-sig", "cp932"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+def resolve_import_rows(text, mapping):
+    """Resolve the column mapping against the CSV text.
+
+    `mapping` maps item names (IMPORT_FIELDS) to a header name or a
+    1-based column number, per item; the two styles may be mixed.
+    When any item names a header, the first row is the header row.
+    Returns [(row_number, cells)] for the data rows, where cells
+    maps each mapped item to its raw string (None when the row is
+    shorter than the column). Row numbers are 1-based physical line
+    numbers (the header row is row 1); blank lines are ignored.
+    Raises ImportFormatError for file-level problems.
+    """
+    reader = csv.reader(io.StringIO(text, newline=""))
+    rows = []
+    for row in reader:
+        if any(cell.strip() for cell in row):
+            rows.append((reader.line_num, row))
+    if not rows:
+        raise ImportFormatError("CSVにデータがありません")
+    has_header = any(not spec.isdigit() for spec in mapping.values())
+    header = None
+    data_rows = rows
+    if has_header:
+        header = [cell.strip() for cell in rows[0][1]]
+        data_rows = rows[1:]
+    width = len(rows[0][1])
+    index = {}
+    for field, spec in mapping.items():
+        if spec.isdigit():
+            column = int(spec)
+            if column < 1 or column > width:
+                raise ImportFormatError(
+                    f"{field} の列番号 {column} が範囲外です"
+                )
+            index[field] = column - 1
+        elif spec in header:
+            index[field] = header.index(spec)
+        else:
+            raise ImportFormatError(
+                f"ヘッダに「{spec}」という列がありません"
+            )
+    return [
+        (number, {field: (row[i] if i < len(row) else None)
+                   for field, i in index.items()})
+        for number, row in data_rows
+    ]
+
+
+def parse_import_row(cells):
+    """Turn one row's raw cells into typed values.
+
+    The result carries only the mapped items (plus code and
+    account_type, which always resolve: an unmapped or empty
+    account means 特定）. Numbers may carry comma separators.
+    avg_price comes back as a Decimal so the weighted average in
+    "add" mode stays exact. Raises ImportRowError with the reason
+    when the row cannot be imported.
+    """
+    code = (cells.get("code") or "").strip().upper()
+    if not code:
+        raise ImportRowError("銘柄コードが空です")
+    values = {"code": code}
+    account = (cells.get("account_type") or "").strip()
+    values["account_type"] = account or "特定"
+    if "avg_price" in cells:
+        cell = (cells["avg_price"] or "").replace(",", "").strip()
+        try:
+            price = Decimal(cell)
+        except InvalidOperation:
+            raise ImportRowError("平均取得単価が数値として解釈できません")
+        if not price.is_finite():
+            raise ImportRowError("平均取得単価が数値として解釈できません")
+        if price < 0:
+            raise ImportRowError("平均取得単価が負の値です")
+        values["avg_price"] = price
+    for field, label in _IMPORT_INT_FIELDS:
+        if field not in cells:
+            continue
+        cell = (cells[field] or "").replace(",", "").strip()
+        if cell == "" and field != "shares":
+            # Lent / ordered counts are auxiliary: a blank cell is
+            # the broker's way of saying none. Shares are the core
+            # of the row, so a blank there is a parse failure.
+            values[field] = 0
+            continue
+        try:
+            number = int(cell)
+        except ValueError:
+            raise ImportRowError(f"{label}が数値として解釈できません")
+        if number < 0:
+            raise ImportRowError(f"{label}が負の値です")
+        values[field] = number
+    if "custody_type" in cells:
+        custody = (cells["custody_type"] or "").strip()
+        values["custody_type"] = custody or None
+    return values
+
+
+def apply_import_row(conn, *, code, account_type, mode, values):
+    """Apply one parsed import row to holdings.
+
+    `values` holds only the mapped items (see parse_import_row);
+    the caller has already made sure shares is among them, and
+    avg_price too whenever this row creates a holding or mode is
+    "add". Returns "added", "updated" or "skipped":
+
+    - no holding yet: created in every mode, with unmapped lent /
+      ordered / custody defaulting to 0 / 0 / None;
+    - "skip": an existing holding is left untouched (no event);
+    - "overwrite": the mapped items replace the stored ones,
+      unmapped items keep their values;
+    - "add": shares are added and the average price re-averaged
+      (lent / ordered / custody are not touched).
+
+    Creations and changes are recorded as import events.
+    """
+    holding = _holding_row(conn, code, account_type)
+    if holding is None:
+        shares, avg_price = values["shares"], values["avg_price"]
+        conn.execute(
+            "INSERT INTO holdings(code, account_type, custody_type,"
+            " avg_price, shares, lent_shares, ordered_shares)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (code, account_type, values.get("custody_type"), avg_price,
+             shares, values.get("lent_shares", 0),
+             values.get("ordered_shares", 0)),
+        )
+        _record_event(
+            conn, code=code, account_type=account_type, kind="import",
+            source_type="import", source_id=None, delta_shares=shares,
+            before=(0, None), after=(shares, avg_price),
+        )
+        return "added"
+    if mode == "skip":
+        return "skipped"
+    before = (holding["shares"], holding["avg_price"])
+    if mode == "add":
+        added = values["shares"]
+        total = holding["shares"] + added
+        if total:
+            new_avg = (
+                holding["avg_price"] * holding["shares"]
+                + values["avg_price"] * added
+            ) / total
+        else:
+            new_avg = values["avg_price"]
+        conn.execute(
+            "UPDATE holdings SET shares = %s, avg_price = %s,"
+            " updated_at = now() WHERE id = %s",
+            (total, new_avg, holding["id"]),
+        )
+        after = (total, new_avg)
+    else:  # overwrite
+        merged = {
+            field: values.get(field, holding[field])
+            for field in ("avg_price", "shares", "lent_shares",
+                          "ordered_shares", "custody_type")
+        }
+        conn.execute(
+            "UPDATE holdings SET avg_price = %s, shares = %s,"
+            " lent_shares = %s, ordered_shares = %s, custody_type = %s,"
+            " updated_at = now() WHERE id = %s",
+            (merged["avg_price"], merged["shares"],
+             merged["lent_shares"], merged["ordered_shares"],
+             merged["custody_type"], holding["id"]),
+        )
+        after = (merged["shares"], merged["avg_price"])
+    _record_event(
+        conn, code=code, account_type=account_type, kind="import",
+        source_type="import", source_id=None,
+        delta_shares=after[0] - before[0], before=before, after=after,
+    )
+    return "updated"
 
 
 def list_candidate_rows(conn):

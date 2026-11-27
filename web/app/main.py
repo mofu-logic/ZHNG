@@ -17,7 +17,15 @@ from datetime import date, datetime, timedelta
 from typing import Annotated
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -52,7 +60,11 @@ from app.yahoo import (
 )
 from app.services import (
     BENEFIT_MEMO_FIELDS,
+    IMPORT_FIELDS,
+    ImportFormatError,
+    ImportRowError,
     LinkageError,
+    apply_import_row,
     buy_linkage_applies,
     cancel_buy,
     cancel_sale,
@@ -61,6 +73,7 @@ from app.services import (
     create_buy,
     create_holding,
     create_sale,
+    decode_import_text,
     delete_buy,
     delete_candidate,
     delete_holding,
@@ -71,7 +84,9 @@ from app.services import (
     list_benefit_memo_rows,
     list_holding_events,
     list_candidate_rows,
+    parse_import_row,
     register_candidate,
+    resolve_import_rows,
     update_benefit,
     update_candidate,
     upsert_benefit_memo,
@@ -950,6 +965,19 @@ class HoldingEventOut(BaseModel):
     created_at: datetime
 
 
+class HoldingImportFailureOut(BaseModel):
+    row: int
+    reason: str
+
+
+class HoldingImportOut(BaseModel):
+    added: int
+    updated: int
+    skipped: int
+    failed: int
+    failures: list[HoldingImportFailureOut]
+
+
 @app.post("/api/v1/holdings", status_code=201, response_model=HoldingOut, tags=["holdings"])
 def api_holdings_create(payload: HoldingIn):
     code = payload.code.strip().upper()
@@ -993,6 +1021,114 @@ def api_holdings_create(payload: HoldingIn):
     emit_event("holding.added", id=row["id"], code=code,
                account_type=payload.account_type)
     return out
+
+
+@app.post("/api/v1/holdings/import", response_model=HoldingImportOut, tags=["holdings"])
+def api_holdings_import(
+    file: UploadFile = File(...),
+    code_col: str = Form(...),
+    account_type_col: str | None = Form(None),
+    avg_price_col: str | None = Form(None),
+    shares_col: str | None = Form(None),
+    lent_shares_col: str | None = Form(None),
+    ordered_shares_col: str | None = Form(None),
+    custody_type_col: str | None = Form(None),
+    mode: str = Form("skip"),
+):
+    if mode not in ("overwrite", "skip", "add"):
+        raise HTTPException(
+            status_code=422,
+            detail="mode は overwrite / skip / add のいずれかを指定してください",
+        )
+    specs = {
+        "code": code_col,
+        "account_type": account_type_col,
+        "avg_price": avg_price_col,
+        "shares": shares_col,
+        "lent_shares": lent_shares_col,
+        "ordered_shares": ordered_shares_col,
+        "custody_type": custody_type_col,
+    }
+    mapping = {
+        field: specs[field].strip()
+        for field in IMPORT_FIELDS
+        if specs[field] and specs[field].strip()
+    }
+    if "code" not in mapping:
+        raise HTTPException(
+            status_code=422, detail="銘柄コードの列（code_col）が必要です"
+        )
+    file.file.seek(0)
+    text = decode_import_text(file.file.read())
+    if text is None:
+        raise HTTPException(
+            status_code=422,
+            detail="ファイルを UTF-8 / Shift_JIS として読み取れませんでした",
+        )
+    try:
+        rows = resolve_import_rows(text, mapping)
+    except ImportFormatError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    counts = {"added": 0, "updated": 0, "skipped": 0}
+    failures = []
+    for number, cells in rows:
+        if "shares" not in mapping:
+            # Shares are the core of a holding row: without a
+            # mapping for them no row can be imported at all.
+            failures.append(HoldingImportFailureOut(
+                row=number, reason="株数の対応付け（shares_col）がありません"))
+            continue
+        try:
+            values = parse_import_row(cells)
+        except ImportRowError as e:
+            failures.append(HoldingImportFailureOut(
+                row=number, reason=str(e)))
+            continue
+        code, account_type = values["code"], values["account_type"]
+        with db() as conn:
+            known = conn.execute(
+                "SELECT 1 FROM stocks WHERE code = %s", (code,)
+            ).fetchone()
+            exists = find_holding(conn, code, account_type) is not None
+        if (not exists or mode == "add") and "avg_price" not in values:
+            # A creation needs a price, and "add" needs one to
+            # re-average; without a mapping the row cannot go in.
+            failures.append(HoldingImportFailureOut(
+                row=number,
+                reason="平均取得単価の対応付け（avg_price_col）がありません"))
+            continue
+        fetched = None
+        if known is None:
+            # Same path as the manual add: a code the stock master
+            # does not know is fetched from Yahoo first; when the
+            # fetch fails the row fails and nothing is registered.
+            try:
+                market, name, price, fields = asyncio.run(
+                    fetch_one_quote(code))
+            except RuntimeError as e:
+                failures.append(HoldingImportFailureOut(
+                    row=number,
+                    reason=f"銘柄情報を取得できませんでした: {e}"))
+                continue
+            fetched = (name or code, market)
+        with db() as conn:
+            if fetched is not None:
+                upsert_stock_info(conn, code, fetched[0], fetched[1])
+            outcome = apply_import_row(
+                conn, code=code, account_type=account_type,
+                mode=mode, values=values,
+            )
+            conn.commit()
+        counts[outcome] += 1
+    result = HoldingImportOut(
+        added=counts["added"], updated=counts["updated"],
+        skipped=counts["skipped"], failed=len(failures),
+        failures=failures,
+    )
+    emit_event("holding.imported", mode=mode, added=result.added,
+               updated=result.updated, skipped=result.skipped,
+               failed=result.failed)
+    return result
 
 
 @app.delete("/api/v1/holdings/{id}", status_code=204, tags=["holdings"])
