@@ -211,14 +211,18 @@ def test_buy_outside_allowlist_is_422_and_registers_nothing(client, db, bad):
 
 
 def test_sale_outside_allowlist_is_422_and_registers_nothing(client, db):
-    # A holding under the outside value exists (inserted directly,
-    # as the current schema still allows it), so the 422 can only
-    # come from the allowlist, not from a missing holding.
-    _seed_holding(db, account_type="新NISA")
+    # The holding is seeded under an allowlisted account （特定）.
+    # Seeding it under the outside value itself is impossible once
+    # the holdings CHECK constraint exists (see the DB constraint
+    # tests below), and it is not needed here: the API validates
+    # the request's account type against the allowlist before any
+    # linkage check runs, so the 422 still comes from the
+    # allowlist, not from a missing holding.
+    _seed_holding(db, account_type="特定")
     r = _sale(client, account_type="新NISA")
     assert r.status_code == 422
     assert _count(db, "sales") == 0
-    assert _holding(db, account_type="新NISA")["shares"] == 100
+    assert _holding(db, account_type="特定")["shares"] == 100
     assert _events(db) == []
 
 
