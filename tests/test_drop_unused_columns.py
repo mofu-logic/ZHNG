@@ -55,7 +55,6 @@ import re
 from pathlib import Path
 
 import psycopg
-import pytest
 from psycopg.rows import dict_row
 
 from conftest import TEST_DB_URL, seed_settings

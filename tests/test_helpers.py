@@ -5,8 +5,6 @@ Pydantic's job in the /api/v1 models, covered by tests/test_api.py.)
 """
 from datetime import date
 
-import pytest
-
 from app.main import _prev_trading_date
 
 

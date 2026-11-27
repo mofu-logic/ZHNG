@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
-from test_parse import INDEX_PAGE, JP_PAGE
+from test_parse import INDEX_PAGE, JP_PAGE, JP_PAGE_DECIMAL
 
 
 class FakeResponse:
@@ -438,8 +438,6 @@ def test_fetch_all_unexpected_loop_error_still_finishes_run(
 # fix, fetch_all must refuse to store an implausible quote and count
 # the code as failed instead. The pages below are built so that only
 # one guard condition trips in each test.
-
-from test_parse import JP_PAGE_DECIMAL
 
 
 def _quote_page(price, prev_close, open_price, day_high, day_low, volume):
