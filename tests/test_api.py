@@ -161,7 +161,10 @@ def test_api_validation(client, db):
     # Wrong types and impossible dates are rejected with 422.
     r = client.post("/api/v1/buys", json={"avg_price": "abc"})
     assert r.status_code == 422
-    r = client.post("/api/v1/sales", json={"purchase_date": "2026-13-40"})
+    r = client.post(
+        "/api/v1/sales",
+        json={"code": "9999", "executed_date": "2026-13-40"},
+    )
     assert r.status_code == 422
     # Settings requires every field.
     r = client.put("/api/v1/settings", json={"tax_rate_pct": 20.0})
@@ -255,7 +258,7 @@ def test_buy_negative_values_rejected(client, db, field):
 
 @pytest.mark.parametrize(
     "field",
-    ["buy_price", "sell_price", "shares", "sell_shares", "executed_shares"],
+    ["buy_price", "sell_price", "sell_shares", "executed_shares"],
 )
 def test_sale_negative_values_rejected(client, db, field):
     payload = {"code": "9999"}

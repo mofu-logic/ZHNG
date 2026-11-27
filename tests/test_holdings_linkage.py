@@ -783,25 +783,19 @@ def test_buy_named_unknown_code_without_linkage_skips_fetch(
     assert _events(db) == []
 
 
-# --------------------------- sale reversal restores the other columns
+# ---------------------- sale reversal restores the deleted row
 
 
-def test_cancel_sale_restores_lent_ordered_custody(client, db):
-    # A sale of every share deletes the holdings row; the event must
-    # remember lent/ordered/custody so cancelling the sale brings
-    # the row back with those columns intact, not just shares/price.
+def test_cancel_sale_restores_deleted_holding_row(client, db):
+    # A sale of every share deletes the holdings row; cancelling
+    # the sale brings the row back with the shares and average
+    # price the event recorded as its before state.
     seed_stock_holding(db)  # 特定: 100 shares @ 800
-    db.execute(
-        "UPDATE holdings SET lent_shares = 10, ordered_shares = 5,"
-        " custody_type = '代用' WHERE code = '9999'"
-    )
-    db.commit()
     sale_id = _sale(client, executed_shares=100).json()["id"]
     assert _holding(db) is None
     ev = _events(db)[0]
-    assert ev["lent_shares_before"] == 10
-    assert ev["ordered_shares_before"] == 5
-    assert ev["custody_type_before"] == "代用"
+    assert ev["shares_before"] == 100
+    assert float(ev["avg_price_before"]) == 800.0
 
     r = client.post(f"/api/v1/sales/{sale_id}/cancel")
     assert r.status_code == 200
@@ -809,6 +803,3 @@ def test_cancel_sale_restores_lent_ordered_custody(client, db):
     assert holding is not None
     assert holding["shares"] == 100
     assert float(holding["avg_price"]) == 800.0
-    assert holding["lent_shares"] == 10
-    assert holding["ordered_shares"] == 5
-    assert holding["custody_type"] == "代用"

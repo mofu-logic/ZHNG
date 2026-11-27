@@ -42,13 +42,12 @@ def _store_quote(conn, code, price, fields, snap_date, run_id=None,
     div = fields.get("1株配当（会社予想）")
     volume = fields.get("出来高")
     conn.execute(
-        "INSERT INTO price_points(code, captured_at, price, prev_close,"
-        " day_high, day_low, volume, source)"
-        " VALUES (%s, now(), %s, %s, %s, %s, %s, 'yahoo-jp')",
+        "INSERT INTO price_points(code, captured_at, price,"
+        " day_high, day_low, volume)"
+        " VALUES (%s, now(), %s, %s, %s, %s)",
         (
             code,
             price,
-            fields.get("前日終値"),
             fields.get("高値"),
             fields.get("安値"),
             int(volume) if volume is not None else None,
@@ -57,9 +56,8 @@ def _store_quote(conn, code, price, fields, snap_date, run_id=None,
     conn.execute(
         "INSERT INTO daily_snapshots(code, snap_date, close_price,"
         " prev_close, open_price, day_high, day_low, volume,"
-        " market_cap_m, dividend_forecast, dividend_yield, per, pbr,"
-        " captured_at, source)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now(), 'yahoo-jp')"
+        " market_cap_m, dividend_forecast, dividend_yield, per, pbr)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
         " ON CONFLICT (code, snap_date) DO UPDATE SET"
         " close_price=EXCLUDED.close_price,"
         " prev_close=EXCLUDED.prev_close,"
@@ -68,7 +66,7 @@ def _store_quote(conn, code, price, fields, snap_date, run_id=None,
         " market_cap_m=EXCLUDED.market_cap_m,"
         " dividend_forecast=EXCLUDED.dividend_forecast,"
         " dividend_yield=EXCLUDED.dividend_yield, per=EXCLUDED.per,"
-        " pbr=EXCLUDED.pbr, captured_at=now()",
+        " pbr=EXCLUDED.pbr",
         (
             code,
             snap_date,
@@ -106,11 +104,7 @@ def _store_quote(conn, code, price, fields, snap_date, run_id=None,
             " dividend_auto) VALUES (%s, %s, %s)"
             " ON CONFLICT (code) DO UPDATE SET"
             " dividend_auto=EXCLUDED.dividend_auto,"
-            " dividend_forecast=EXCLUDED.dividend_forecast,"
-            " info_updated_on = CASE WHEN"
-            " dividend_benefits.dividend_forecast IS DISTINCT FROM"
-            " EXCLUDED.dividend_forecast THEN CURRENT_DATE"
-            " ELSE dividend_benefits.info_updated_on END",
+            " dividend_forecast=EXCLUDED.dividend_forecast",
             (code, div, div),
         )
 
@@ -295,15 +289,13 @@ async def fetch_all(note="manual", *, db=_default_db, lock):
                         conn.execute(
                             "INSERT INTO daily_snapshots(code, snap_date, close_price,"
                             " prev_close, open_price, day_high, day_low, volume,"
-                            " market_cap_m, dividend_forecast, dividend_yield, per, pbr,"
-                            " captured_at, source)"
-                            " VALUES ('N225',%s,%s,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL,NULL,"
-                            " now(), 'yahoo-jp')"
+                            " market_cap_m, dividend_forecast, dividend_yield, per, pbr)"
+                            " VALUES ('N225',%s,%s,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL,NULL)"
                             " ON CONFLICT (code, snap_date) DO UPDATE SET"
                             " close_price=EXCLUDED.close_price,"
                             " prev_close=EXCLUDED.prev_close,"
                             " open_price=EXCLUDED.open_price, day_high=EXCLUDED.day_high,"
-                            " day_low=EXCLUDED.day_low, captured_at=now()",
+                            " day_low=EXCLUDED.day_low",
                             (
                                 snap_date,
                                 nprice,

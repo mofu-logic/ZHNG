@@ -139,8 +139,8 @@ def seed_stock_holding(
     )
     if price is not None:
         conn.execute(
-            "INSERT INTO price_points(code, captured_at, price, source)"
-            " VALUES (%s, now(), %s, 'test')",
+            "INSERT INTO price_points(code, captured_at, price)"
+            " VALUES (%s, now(), %s)",
             (code, price),
         )
     if dividend is not None:

@@ -11,10 +11,7 @@ CREATE TABLE IF NOT EXISTS holdings(
   account_type text NOT NULL
     CONSTRAINT holdings_account_type_allowlist
     CHECK (account_type IN (__ACCOUNT_TYPE_LIST__)),
-  custody_type text,
-  avg_price numeric NOT NULL, shares integer NOT NULL,
-  lent_shares integer DEFAULT 0, ordered_shares integer DEFAULT 0,
-  updated_at timestamptz DEFAULT now());
+  avg_price numeric NOT NULL, shares integer NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS holdings_code_account_uidx
   ON holdings (code, account_type);
 CREATE TABLE IF NOT EXISTS buy_lots(
@@ -22,18 +19,18 @@ CREATE TABLE IF NOT EXISTS buy_lots(
   purchase_date date, policy text, trigger_note text, note text,
   status text DEFAULT '約定済');
 CREATE TABLE IF NOT EXISTS sales(
-  id serial PRIMARY KEY, code text, name text, buy_price numeric, shares integer,
-  purchase_date date, sell_price numeric, sell_shares integer,
+  id serial PRIMARY KEY, code text, name text, buy_price numeric,
+  sell_price numeric, sell_shares integer,
   executed_shares integer DEFAULT 0, order_start_date date, executed_date date,
   profit numeric, status text DEFAULT '注文中', memo text);
 CREATE TABLE IF NOT EXISTS dividend_benefits(
   code text PRIMARY KEY, dividend_forecast numeric, dividend_auto numeric,
-  benefit_value numeric, benefit_desc text, info_updated_on date,
+  benefit_value numeric, benefit_desc text,
   funding_target boolean, judgment_on date, judgment_note text);
 CREATE TABLE IF NOT EXISTS price_points(
   id serial PRIMARY KEY, code text NOT NULL, captured_at timestamptz NOT NULL,
-  price numeric NOT NULL, prev_close numeric, day_high numeric, day_low numeric,
-  volume bigint, source text);
+  price numeric NOT NULL, day_high numeric, day_low numeric,
+  volume bigint);
 CREATE TABLE IF NOT EXISTS settings(key text PRIMARY KEY, value text);
 CREATE TABLE IF NOT EXISTS fetch_runs(
   id serial PRIMARY KEY, started_at timestamptz, finished_at timestamptz,
@@ -49,7 +46,6 @@ CREATE TABLE IF NOT EXISTS daily_snapshots(
   day_high numeric, day_low numeric, volume bigint,
   market_cap_m numeric, dividend_forecast numeric, dividend_yield numeric,
   per numeric, pbr numeric,
-  captured_at timestamptz, source text,
   PRIMARY KEY (code, snap_date));
 CREATE TABLE IF NOT EXISTS app_logs(
   id serial PRIMARY KEY, ts timestamptz NOT NULL, severity text,
@@ -73,12 +69,7 @@ CREATE TABLE IF NOT EXISTS holding_events(
   delta_shares integer NOT NULL,
   shares_before integer NOT NULL, shares_after integer NOT NULL,
   avg_price_before numeric, avg_price_after numeric,
-  lent_shares_before integer, ordered_shares_before integer,
-  custody_type_before text,
   reverses_event_id integer, created_at timestamptz NOT NULL DEFAULT now());
-ALTER TABLE holding_events ADD COLUMN IF NOT EXISTS lent_shares_before integer;
-ALTER TABLE holding_events ADD COLUMN IF NOT EXISTS ordered_shares_before integer;
-ALTER TABLE holding_events ADD COLUMN IF NOT EXISTS custody_type_before text;
 ALTER TABLE buy_lots ADD COLUMN IF NOT EXISTS account_type text;
 ALTER TABLE buy_lots ADD COLUMN IF NOT EXISTS cancelled_at timestamptz;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS account_type text;
@@ -137,3 +128,21 @@ BEGIN
 END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS holdings_code_account_uidx
   ON holdings (code, account_type);
+
+-- 未使用カラムの削除（既存DB向け。カラム棚卸しで、コードでの
+-- 読み書きが無く保持する意味も薄いと判断した14列を落とす。
+-- すべて冪等で、起動のたびに走っても安全な形にしてある）。
+ALTER TABLE holdings DROP COLUMN IF EXISTS custody_type;
+ALTER TABLE holdings DROP COLUMN IF EXISTS lent_shares;
+ALTER TABLE holdings DROP COLUMN IF EXISTS ordered_shares;
+ALTER TABLE holdings DROP COLUMN IF EXISTS updated_at;
+ALTER TABLE holding_events DROP COLUMN IF EXISTS custody_type_before;
+ALTER TABLE holding_events DROP COLUMN IF EXISTS lent_shares_before;
+ALTER TABLE holding_events DROP COLUMN IF EXISTS ordered_shares_before;
+ALTER TABLE sales DROP COLUMN IF EXISTS purchase_date;
+ALTER TABLE sales DROP COLUMN IF EXISTS shares;
+ALTER TABLE daily_snapshots DROP COLUMN IF EXISTS source;
+ALTER TABLE daily_snapshots DROP COLUMN IF EXISTS captured_at;
+ALTER TABLE price_points DROP COLUMN IF EXISTS prev_close;
+ALTER TABLE price_points DROP COLUMN IF EXISTS source;
+ALTER TABLE dividend_benefits DROP COLUMN IF EXISTS info_updated_on;

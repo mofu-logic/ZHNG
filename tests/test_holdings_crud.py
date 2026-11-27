@@ -134,14 +134,13 @@ def test_openapi_holdings_paths_and_schemas(client, db):
     assert "get" in paths["/api/v1/holdings/{id}/events"]
     schemas = doc["components"]["schemas"]
     hin = schemas["HoldingIn"]
-    for f in ("code", "account_type", "avg_price", "shares",
-              "lent_shares", "ordered_shares", "custody_type"):
+    for f in ("code", "account_type", "avg_price", "shares"):
         assert f in hin["properties"], f
     for f in ("code", "account_type", "avg_price", "shares"):
         assert f in hin["required"], f
     hout = schemas["HoldingOut"]["properties"]
-    for f in ("id", "code", "name", "account_type", "custody_type",
-              "avg_price", "shares", "lent_shares", "ordered_shares"):
+    for f in ("id", "code", "name", "account_type",
+              "avg_price", "shares"):
         assert f in hout, f
     ev = schemas["HoldingEventOut"]["properties"]
     for f in ("id", "code", "account_type", "kind", "source_type",
@@ -164,10 +163,6 @@ def test_add_holding_creates_row_event_and_response(client, db):
     assert body["account_type"] == "特定"
     assert float(body["avg_price"]) == 800.0
     assert body["shares"] == 100
-    # Optional fields default: no lent / ordered shares, no custody.
-    assert body["lent_shares"] == 0
-    assert body["ordered_shares"] == 0
-    assert body["custody_type"] is None
 
     holding = _holding(db)
     assert holding is not None
@@ -188,21 +183,6 @@ def test_add_holding_creates_row_event_and_response(client, db):
     assert ev["shares_after"] == 100
     assert float(ev["avg_price_after"]) == 800.0
     assert ev["reverses_event_id"] is None
-
-
-def test_add_holding_optional_fields_are_stored(client, db):
-    _seed_stock_only(db)
-    r = _add(client, lent_shares=10, ordered_shares=5,
-             custody_type="保護預り")
-    assert r.status_code == 201
-    body = r.json()
-    assert body["lent_shares"] == 10
-    assert body["ordered_shares"] == 5
-    assert body["custody_type"] == "保護預り"
-    holding = _holding(db)
-    assert holding["lent_shares"] == 10
-    assert holding["ordered_shares"] == 5
-    assert holding["custody_type"] == "保護預り"
 
 
 def test_add_holding_same_code_other_account_is_allowed(client, db):
@@ -444,9 +424,9 @@ def test_dashboard_holdings_controls(client, db):
     assert "追加" in page
     for field in ("code", "account_type", "avg_price", "shares"):
         assert f'name="{field}"' in page, field
-    # Lent shares, ordered shares and custody type are not inputs of
-    # the add form (the owner does not use them for now). They remain
-    # available through the API and the CSV import mapping.
+    # Lent shares, ordered shares and custody type are not inputs
+    # of the add form: the three were dropped from the app entirely
+    # (columns, API and CSV import mapping alike).
     for field in ("lent_shares", "ordered_shares", "custody_type"):
         assert f'name="{field}"' not in page, field
     # Per-row delete and history actions, wired to the holdings API.

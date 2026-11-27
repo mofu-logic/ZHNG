@@ -59,28 +59,16 @@ def _holding_row(conn, code, account_type):
 
 
 def _record_event(conn, *, code, account_type, kind, source_type,
-                  source_id, delta_shares, before, after, reverses=None,
-                  row_before=None):
-    # row_before carries the holdings row's other columns (lent /
-    # ordered shares, custody type) when the event deletes the row:
-    # without them a later reversal could not restore the row whole.
-    lent, ordered, custody = row_before or (None, None, None)
+                  source_id, delta_shares, before, after, reverses=None):
     conn.execute(
         "INSERT INTO holding_events(code, account_type, kind,"
         " source_type, source_id, delta_shares, shares_before,"
         " shares_after, avg_price_before, avg_price_after,"
-        " lent_shares_before, ordered_shares_before,"
-        " custody_type_before, reverses_event_id)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        " reverses_event_id)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (code, account_type, kind, source_type, source_id, delta_shares,
-         before[0], after[0], before[1], after[1],
-         lent, ordered, custody, reverses),
+         before[0], after[0], before[1], after[1], reverses),
     )
-
-
-def _row_extras(row):
-    """The holdings columns a shares/price restore alone would lose."""
-    return (row["lent_shares"], row["ordered_shares"], row["custody_type"])
 
 
 def _linkage_event(conn, source_type, source_id, kind):
@@ -122,27 +110,21 @@ def _apply_reversal(conn, event, *, kind, source_type, source_id):
         (holding["shares"], holding["avg_price"]) if holding else (0, None)
     )
     target = (event["shares_before"], event["avg_price_before"])
-    row_before = None
     if target[0] == 0:
         if holding is not None:
-            row_before = _row_extras(holding)
             conn.execute(
                 "DELETE FROM holdings WHERE id = %s", (holding["id"],)
             )
     elif holding is None:
         conn.execute(
-            "INSERT INTO holdings(code, account_type, avg_price, shares,"
-            " lent_shares, ordered_shares, custody_type)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (code, account_type, target[1], target[0],
-             event["lent_shares_before"] or 0,
-             event["ordered_shares_before"] or 0,
-             event["custody_type_before"]),
+            "INSERT INTO holdings(code, account_type, avg_price, shares)"
+            " VALUES (%s, %s, %s, %s)",
+            (code, account_type, target[1], target[0]),
         )
     else:
         conn.execute(
-            "UPDATE holdings SET shares = %s, avg_price = %s,"
-            " updated_at = now() WHERE id = %s",
+            "UPDATE holdings SET shares = %s, avg_price = %s"
+            " WHERE id = %s",
             (target[0], target[1], holding["id"]),
         )
     _record_event(
@@ -150,7 +132,6 @@ def _apply_reversal(conn, event, *, kind, source_type, source_id):
         source_type=source_type, source_id=source_id,
         delta_shares=-event["delta_shares"],
         before=current, after=target, reverses=event["id"],
-        row_before=row_before,
     )
 
 
@@ -207,8 +188,8 @@ def _apply_buy_linkage(conn, lot):
         before = (holding["shares"], holding["avg_price"])
         after = (total, new_avg)
         conn.execute(
-            "UPDATE holdings SET shares = %s, avg_price = %s,"
-            " updated_at = now() WHERE id = %s",
+            "UPDATE holdings SET shares = %s, avg_price = %s"
+            " WHERE id = %s",
             (total, new_avg, holding["id"]),
         )
     _record_event(
@@ -287,27 +268,23 @@ def _apply_sale_linkage(conn, sale, holding):
     ex = sale["executed_shares"]
     remaining = holding["shares"] - ex
     before = (holding["shares"], holding["avg_price"])
-    row_before = None
     if remaining == 0:
         after = (0, None)
-        row_before = _row_extras(holding)
         conn.execute("DELETE FROM holdings WHERE id = %s", (holding["id"],))
     else:
         after = (remaining, holding["avg_price"])
         conn.execute(
-            "UPDATE holdings SET shares = %s, updated_at = now()"
-            " WHERE id = %s",
+            "UPDATE holdings SET shares = %s WHERE id = %s",
             (remaining, holding["id"]),
         )
     _record_event(
         conn, code=sale["code"], account_type=sale["account_type"],
         kind="sell", source_type="sale", source_id=sale["id"],
         delta_shares=-ex, before=before, after=after,
-        row_before=row_before,
     )
 
 
-def create_sale(conn, *, code, name, buy_price, shares, purchase_date,
+def create_sale(conn, *, code, name, buy_price,
                 sell_price, sell_shares, executed_shares, order_start_date,
                 executed_date, profit, status, memo, account_type=None):
     ex = executed_shares or 0
@@ -344,11 +321,11 @@ def create_sale(conn, *, code, name, buy_price, shares, purchase_date,
             )
     _upsert_stock(conn, code, name)
     row = conn.execute(
-        "INSERT INTO sales(code, name, buy_price, shares, purchase_date,"
+        "INSERT INTO sales(code, name, buy_price,"
         " sell_price, sell_shares, executed_shares, order_start_date,"
         " executed_date, profit, status, memo, account_type)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-        (code, name, buy_price, shares, purchase_date, sell_price,
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+        (code, name, buy_price, sell_price,
          sell_shares, ex, order_start_date, executed_date, pf, status,
          memo, account_type),
     ).fetchone()
@@ -414,8 +391,7 @@ def get_holding(conn, holding_id):
     ).fetchone()
 
 
-def create_holding(conn, *, code, account_type, avg_price, shares,
-                   lent_shares, ordered_shares, custody_type):
+def create_holding(conn, *, code, account_type, avg_price, shares):
     """Register a holding directly (the cover for initial
     registration and for trades that left no history) and record
     the manual add in holding_events: the before state is \"not
@@ -423,11 +399,9 @@ def create_holding(conn, *, code, account_type, avg_price, shares,
     checked that no holding exists for (code, account_type) and
     that the stock master knows the code."""
     row = conn.execute(
-        "INSERT INTO holdings(code, account_type, custody_type,"
-        " avg_price, shares, lent_shares, ordered_shares)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-        (code, account_type, custody_type, avg_price, shares,
-         lent_shares, ordered_shares),
+        "INSERT INTO holdings(code, account_type, avg_price, shares)"
+        " VALUES (%s,%s,%s,%s) RETURNING *",
+        (code, account_type, avg_price, shares),
     ).fetchone()
     _record_event(
         conn, code=code, account_type=account_type, kind="add",
@@ -438,9 +412,8 @@ def create_holding(conn, *, code, account_type, avg_price, shares,
 
 
 def delete_holding(conn, holding_id):
-    """Delete a holding row, recording a manual delete event first
-    (with the row's other columns as before-values, so the ledger
-    keeps the whole row). Returns 'not_found', 'blocked' or
+    """Delete a holding row, recording a manual delete event first.
+    Returns 'not_found', 'blocked' or
     'deleted': while the holding's latest unreversed linkage event
     is a buy/sell event the delete is blocked — the trade side
     must be cancelled first, otherwise the ledger would lose the
@@ -460,7 +433,6 @@ def delete_holding(conn, holding_id):
         kind="delete", source_type="manual", source_id=None,
         delta_shares=-row["shares"],
         before=(row["shares"], row["avg_price"]), after=(0, None),
-        row_before=_row_extras(row),
     )
     conn.execute("DELETE FROM holdings WHERE id = %s", (holding_id,))
     return "deleted"
@@ -499,11 +471,10 @@ class ImportRowError(Exception):
 #: The items a CSV column can be mapped onto, in form-field order.
 IMPORT_FIELDS = (
     "code", "account_type", "avg_price", "shares",
-    "lent_shares", "ordered_shares", "custody_type",
 )
 
 _IMPORT_INT_FIELDS = (
-    ("shares", "株数"), ("lent_shares", "貸株数"), ("ordered_shares", "発注数"),
+    ("shares", "株数"),
 )
 
 
@@ -606,12 +577,6 @@ def parse_import_row(cells):
         if field not in cells:
             continue
         cell = (cells[field] or "").replace(",", "").strip()
-        if cell == "" and field != "shares":
-            # Lent / ordered counts are auxiliary: a blank cell is
-            # the broker's way of saying none. Shares are the core
-            # of the row, so a blank there is a parse failure.
-            values[field] = 0
-            continue
         try:
             number = int(cell)
         except ValueError:
@@ -619,9 +584,6 @@ def parse_import_row(cells):
         if number < 0:
             raise ImportRowError(f"{label}が負の値です")
         values[field] = number
-    if "custody_type" in cells:
-        custody = (cells["custody_type"] or "").strip()
-        values["custody_type"] = custody or None
     return values
 
 
@@ -633,13 +595,11 @@ def apply_import_row(conn, *, code, account_type, mode, values):
     avg_price too whenever this row creates a holding or mode is
     "add". Returns "added", "updated" or "skipped":
 
-    - no holding yet: created in every mode, with unmapped lent /
-      ordered / custody defaulting to 0 / 0 / None;
+    - no holding yet: created in every mode;
     - "skip": an existing holding is left untouched (no event);
     - "overwrite": the mapped items replace the stored ones,
       unmapped items keep their values;
-    - "add": shares are added and the average price re-averaged
-      (lent / ordered / custody are not touched).
+    - "add": shares are added and the average price re-averaged.
 
     Creations and changes are recorded as import events.
     """
@@ -647,12 +607,9 @@ def apply_import_row(conn, *, code, account_type, mode, values):
     if holding is None:
         shares, avg_price = values["shares"], values["avg_price"]
         conn.execute(
-            "INSERT INTO holdings(code, account_type, custody_type,"
-            " avg_price, shares, lent_shares, ordered_shares)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s)",
-            (code, account_type, values.get("custody_type"), avg_price,
-             shares, values.get("lent_shares", 0),
-             values.get("ordered_shares", 0)),
+            "INSERT INTO holdings(code, account_type, avg_price, shares)"
+            " VALUES (%s,%s,%s,%s)",
+            (code, account_type, avg_price, shares),
         )
         _record_event(
             conn, code=code, account_type=account_type, kind="import",
@@ -674,24 +631,20 @@ def apply_import_row(conn, *, code, account_type, mode, values):
         else:
             new_avg = values["avg_price"]
         conn.execute(
-            "UPDATE holdings SET shares = %s, avg_price = %s,"
-            " updated_at = now() WHERE id = %s",
+            "UPDATE holdings SET shares = %s, avg_price = %s"
+            " WHERE id = %s",
             (total, new_avg, holding["id"]),
         )
         after = (total, new_avg)
     else:  # overwrite
         merged = {
             field: values.get(field, holding[field])
-            for field in ("avg_price", "shares", "lent_shares",
-                          "ordered_shares", "custody_type")
+            for field in ("avg_price", "shares")
         }
         conn.execute(
-            "UPDATE holdings SET avg_price = %s, shares = %s,"
-            " lent_shares = %s, ordered_shares = %s, custody_type = %s,"
-            " updated_at = now() WHERE id = %s",
-            (merged["avg_price"], merged["shares"],
-             merged["lent_shares"], merged["ordered_shares"],
-             merged["custody_type"], holding["id"]),
+            "UPDATE holdings SET avg_price = %s, shares = %s"
+            " WHERE id = %s",
+            (merged["avg_price"], merged["shares"], holding["id"]),
         )
         after = (merged["shares"], merged["avg_price"])
     _record_event(
@@ -814,8 +767,6 @@ def update_benefit(conn, code, **fields):
             value = True if value else None
         sets.append(f"{key} = %s")
         params.append(value)
-    sets.append("info_updated_on = %s")
-    params.append(datetime.now(JST).date())
     params.append(code)
     cur = conn.execute(
         f"UPDATE dividend_benefits SET {', '.join(sets)} WHERE code = %s",

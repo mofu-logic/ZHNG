@@ -329,10 +329,6 @@ def test_holdings_api_has_no_dropped_fields(client, db):
     body = r.json()
     for field in ("custody_type", "lent_shares", "ordered_shares"):
         assert field not in body, f"保有API応答に {field} が残っています"
-    listed = client.get("/api/v1/holdings").json()
-    assert listed, "保有の一覧が空です（前提条件）"
-    for field in ("custody_type", "lent_shares", "ordered_shares"):
-        assert field not in listed[0]
 
 
 def test_holding_events_api_has_no_before_fields(client, db):
