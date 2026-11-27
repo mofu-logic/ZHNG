@@ -270,6 +270,36 @@ def test_candidate_explicit_null_clears_only_that_field(
     assert float(row["target_price"]) == 1200.0
 
 
+def test_candidate_empty_update_keeps_all_fields(client, db, monkeypatch):
+    monkeypatch.setattr(main.httpx, "AsyncClient", _named_fake_client())
+    client.post("/api/v1/candidates", json={"code": "7777"})  # close 1000
+    client.put(
+        "/api/v1/candidates/7777",
+        json={"policy": "配当・優待", "memo": "決算を見る",
+              "target_price": 1200},
+    )
+    # An empty body names no field at all: the update degenerates to
+    # an existence check and the row must come back unchanged.
+    r = client.put("/api/v1/candidates/7777", json={})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["policy"] == "配当・優待"
+    assert body["memo"] == "決算を見る"
+    assert body["target_price"] == 1200.0
+    assert body["reached"] is True  # 1000 <= 1200 still holds
+    row = db.execute(
+        "SELECT policy, memo, target_price FROM candidates"
+        " WHERE code='7777'"
+    ).fetchone()
+    assert row["policy"] == "配当・優待"
+    assert row["memo"] == "決算を見る"
+    assert float(row["target_price"]) == 1200.0
+    # The existence check still applies: unknown code is a 404.
+    assert client.put(
+        "/api/v1/candidates/7779", json={}
+    ).status_code == 404
+
+
 def test_candidate_long_memo_truncated_with_hover(client, db, monkeypatch):
     monkeypatch.setattr(main.httpx, "AsyncClient", _named_fake_client())
     client.post("/api/v1/candidates", json={"code": "7777"})
