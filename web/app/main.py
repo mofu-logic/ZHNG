@@ -65,6 +65,7 @@ from app.services import (
     ImportRowError,
     LinkageError,
     apply_import_row,
+    benefit_deadline_alerts,
     buy_linkage_applies,
     cancel_buy,
     cancel_sale,
@@ -93,6 +94,7 @@ from app.services import (
     upsert_stock_info,
 )
 from app.settings import (
+    DEFAULT_BENEFIT_DEADLINE_ALERT_DAYS,
     DEFAULT_FETCH_START_TIME,
     FETCH_START_TIME_PATTERN,
     app_config,
@@ -447,6 +449,9 @@ def summary(request: Request):
                  close_price=fnum(r["close_price"]))
             for r in candidates_at_target(conn)
         ]
+        deadline_alerts = benefit_deadline_alerts(
+            conn, app_config(conn)["benefit_deadline_alert_days"]
+        )
 
     movers = []
     for code, s in snaps.items():
@@ -500,6 +505,7 @@ def summary(request: Request):
             movers=movers[:10],
             counts=counts,
             target_hits=target_hits,
+            deadline_alerts=deadline_alerts,
             latest_date=latest_date,
             prev_date=_prev_trading_date(latest_date, prev_date) if latest_date else None,
         ),
@@ -565,12 +571,16 @@ def master(request: Request):
 def benefit_memos_page(request: Request):
     with db() as conn:
         rows = [_benefit_memo_out(r) for r in list_benefit_memo_rows(conn)]
+        deadline_alerts = benefit_deadline_alerts(
+            conn, app_config(conn)["benefit_deadline_alert_days"]
+        )
     editor = {
         r["code"]: {field: r[field] for field in BENEFIT_MEMO_FIELDS}
         for r in rows
     }
     return templates.TemplateResponse(
-        request, "benefit_memos.html", dict(rows=rows, editor=editor)
+        request, "benefit_memos.html",
+        dict(rows=rows, editor=editor, deadline_alerts=deadline_alerts),
     )
 
 
@@ -709,6 +719,9 @@ class SettingsIn(BaseModel):
     fetch_start_time: str = Field(
         default=DEFAULT_FETCH_START_TIME, pattern=FETCH_START_TIME_PATTERN
     )
+    benefit_deadline_alert_days: int = Field(
+        default=DEFAULT_BENEFIT_DEADLINE_ALERT_DAYS, ge=0, le=3650
+    )
 
 
 class BuyOut(BaseModel):
@@ -772,6 +785,7 @@ class SettingsOut(BaseModel):
     otel_endpoint: str
     swagger_enabled: bool
     fetch_start_time: str
+    benefit_deadline_alert_days: int
 
 
 @app.get("/api/v1/buys", response_model=list[BuyOut], tags=["buys"])

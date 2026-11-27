@@ -1,7 +1,7 @@
 """設定まわりのサービス層。
 
 数値設定（KPI）とアプリ設定（ログ保持期間・OTel・Swagger・
-夜間バッチ開始時刻）の読み書き。月あたり所得の目標はここで
+夜間バッチ開始時刻・優待期限アラート日数）の読み書き。月あたり所得の目標はここで
 自動算出する（直接入力した値を保存しない）。
 
 formatting.py（round_half_up）と config.py にのみ依存する
@@ -15,6 +15,8 @@ from app.formatting import round_half_up
 DEFAULT_FETCH_START_TIME = "01:00"
 FETCH_START_TIME_PATTERN = r"^([01][0-9]|2[0-3]):[0-5][0-9]$"
 _FETCH_START_TIME_RE = re.compile(FETCH_START_TIME_PATTERN)
+
+DEFAULT_BENEFIT_DEADLINE_ALERT_DAYS = 30
 
 
 def is_valid_fetch_start_time(value):
@@ -54,7 +56,9 @@ def update_settings(conn, *, tax_rate_pct, target_dividend_total,
                     target_yield_value_pct, log_retention_days=90,
                     otel_enabled=False, otel_endpoint=None,
                     swagger_enabled=False,
-                    fetch_start_time=DEFAULT_FETCH_START_TIME):
+                    fetch_start_time=DEFAULT_FETCH_START_TIME,
+                    benefit_deadline_alert_days=(
+                        DEFAULT_BENEFIT_DEADLINE_ALERT_DAYS)):
     # Monthly after-tax income target is derived, not entered directly:
     # annual dividend target x (1 - tax rate) / 12.
     monthly = round_half_up(target_dividend_total * (1 - tax_rate_pct / 100) / 12)
@@ -66,6 +70,7 @@ def update_settings(conn, *, tax_rate_pct, target_dividend_total,
         "target_yield_now": target_yield_now_pct / 100,
         "target_yield_value": target_yield_value_pct / 100,
         "log_retention_days": float(log_retention_days),
+        "benefit_deadline_alert_days": float(benefit_deadline_alert_days),
     }
     for k, v in values.items():
         conn.execute(
@@ -103,7 +108,8 @@ def _raw_setting(conn, key):
 
 def app_config(conn):
     """The non-KPI app settings: log retention, OTel integration,
-    Swagger, and the nightly fetch start time."""
+    Swagger, the nightly fetch start time, and the benefit deadline
+    alert threshold."""
     retention = _raw_setting(conn, "log_retention_days")
     try:
         retention_days = (
@@ -112,6 +118,17 @@ def app_config(conn):
     except ValueError:
         retention_days = DEFAULT_LOG_RETENTION_DAYS
     stored_start_time = _raw_setting(conn, "fetch_start_time")
+    alert_raw = _raw_setting(conn, "benefit_deadline_alert_days")
+    try:
+        alert_days = (
+            int(float(alert_raw))
+            if alert_raw
+            else DEFAULT_BENEFIT_DEADLINE_ALERT_DAYS
+        )
+    except ValueError:
+        alert_days = DEFAULT_BENEFIT_DEADLINE_ALERT_DAYS
+    if not 0 <= alert_days <= 3650:
+        alert_days = DEFAULT_BENEFIT_DEADLINE_ALERT_DAYS
     return dict(
         log_retention_days=retention_days,
         otel_enabled=_raw_setting(conn, "otel_enabled") == "true",
@@ -122,6 +139,7 @@ def app_config(conn):
             if is_valid_fetch_start_time(stored_start_time)
             else DEFAULT_FETCH_START_TIME
         ),
+        benefit_deadline_alert_days=alert_days,
     )
 
 
