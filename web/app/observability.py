@@ -29,8 +29,8 @@ from opentelemetry import trace
 from opentelemetry._logs import LogRecord, SeverityNumber, get_logger, set_logger_provider
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs.export import (
-    LogExporter,
-    LogExportResult,
+    LogRecordExporter,
+    LogRecordExportResult,
     SimpleLogRecordProcessor,
 )
 from opentelemetry.sdk.resources import Resource
@@ -83,7 +83,7 @@ def format_record(record):
     }
 
 
-class JsonStdoutExporter(LogExporter):
+class JsonStdoutExporter(LogRecordExporter):
     def export(self, batch):
         try:
             for record in batch:
@@ -92,8 +92,8 @@ class JsonStdoutExporter(LogExporter):
                     flush=True,
                 )
         except Exception:
-            return LogExportResult.FAILURE
-        return LogExportResult.SUCCESS
+            return LogRecordExportResult.FAILURE
+        return LogRecordExportResult.SUCCESS
 
     def shutdown(self):
         pass
@@ -102,7 +102,7 @@ class JsonStdoutExporter(LogExporter):
         return True
 
 
-class DbLogExporter(LogExporter):
+class DbLogExporter(LogRecordExporter):
     """Persist records to the app_logs table. Failures are reported on
     stderr only: this exporter must never raise into the logging path
     (that would recurse) and never take the app down."""
@@ -138,8 +138,8 @@ class DbLogExporter(LogExporter):
                 conn.commit()
         except Exception as e:
             print(f"app_logs export failed: {e}", file=sys.stderr, flush=True)
-            return LogExportResult.FAILURE
-        return LogExportResult.SUCCESS
+            return LogRecordExportResult.FAILURE
+        return LogRecordExportResult.SUCCESS
 
     def shutdown(self):
         pass
