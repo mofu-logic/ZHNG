@@ -18,12 +18,15 @@ TEST_DB_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get(
 )
 os.environ["DATABASE_URL"] = TEST_DB_URL
 
-import psycopg
-import pytest
-from hypothesis import settings as _hypothesis_settings
-from psycopg.rows import dict_row
+# The imports below intentionally come after the sys.path and
+# DATABASE_URL setup above: app reads DATABASE_URL at import time,
+# so they cannot move to the top of the file (E402 is expected here).
+import psycopg  # noqa: E402
+import pytest  # noqa: E402
+from hypothesis import settings as _hypothesis_settings  # noqa: E402
+from psycopg.rows import dict_row  # noqa: E402
 
-from app import main
+from app import main  # noqa: E402
 
 # Hypothesis profiles (two-tier operation for the property tests in
 # tests/test_properties.py):

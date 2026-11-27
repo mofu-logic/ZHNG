@@ -9,7 +9,6 @@ import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import pytest
 from opentelemetry._logs import SeverityNumber
 
 from app import main
@@ -201,7 +200,6 @@ def test_logs_page_and_filters(client, db):
 
 
 def test_http_request_event_logged(client, db):
-    seed = db.execute("SELECT count(*) c FROM app_logs").fetchone()["c"]
     assert client.get("/healthz").status_code == 200
     assert client.get("/logs").status_code == 200
     rows = _rows(db, "http.request")

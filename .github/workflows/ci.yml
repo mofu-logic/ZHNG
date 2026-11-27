@@ -29,7 +29,7 @@ jobs:
       - name: Lint (ruff, scope pinned in ruff.toml)
         run: |
           pip install --quiet "ruff==0.17.6"
-          cd src && ruff check web/app
+          cd src && ruff check web/app tests
 
   tests:
     runs-on: ubuntu-latest
