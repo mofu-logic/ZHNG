@@ -11,11 +11,11 @@
         <td><input type="number" name="tax_rate_pct" step="0.001" min="0" max="100" value="{{ tax_rate_pct }}" style="width:140px"></td>
       </tr>
       <tr>
-        <td>目標：年間配当合計（円）</td>
+        <td>目標：年間配当予想（円）</td>
         <td><input type="number" name="target_dividend_total" step="1" min="0" value="{{ target_dividend_total|int }}" style="width:140px"></td>
       </tr>
       <tr>
-        <td>目標：月あたり所得（税引き後）（円）<br><span class="sub">年間配当合計 ×（1 − 税率）÷ 12 で自動算出</span></td>
+        <td>目標：月あたり所得（税引き後）（円）<br><span class="sub">年間配当予想 ×（1 − 税率）÷ 12 で自動算出</span></td>
         <td><input type="text" name="target_monthly_income" value="{{ target_monthly_income|int }}" readonly style="width:140px; background:#eef1f6; color:#43506a"></td>
       </tr>
       <tr>
@@ -95,7 +95,7 @@
   <div style="margin-top:6px"><a href="/docs" target="_blank" rel="noopener">/docs を開く（Swagger UI）</a></div>
   {% endif %}
 
-  <div style="margin-top:14px"><button type="submit">保存する</button></div>
+  <div style="margin-top:14px"><button type="submit">保存</button></div>
 </form>
 <script>
   // Saving goes through the JSON API (/api/v1), same as external clients.

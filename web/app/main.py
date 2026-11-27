@@ -194,7 +194,7 @@ app = FastAPI(
     title="株式ポートフォリオ API",
     version="1.0.0",
     description=(
-        "売買履歴・配当優待マスタ・設定の登録／更新／参照を行う "
+        "売買履歴・配当・優待マスタ・設定の登録／更新／参照を行う "
         "JSON API（/api/v1）。画面と外部連携で同一の IF を使う。"
         "このドキュメントは OpenAPI 仕様として /openapi.json でも取得できる。"
     ),
@@ -1294,7 +1294,7 @@ def api_benefit_memos_update(code: str, payload: BenefitMemoIn):
         )
         if not updated:
             raise HTTPException(
-                status_code=404, detail="銘柄が見つかりません"
+                status_code=404, detail="銘柄が見つかりませんでした"
             )
         conn.commit()
         row = get_benefit_memo_row(conn, code)
@@ -1565,6 +1565,7 @@ def logs_page(request: Request, severity: str = "", q: str = ""):
             f"SELECT * FROM app_logs{where} ORDER BY id DESC LIMIT 200",
             params,
         ).fetchall()
+        log_retention_days = app_config(conn)["log_retention_days"]
     out = []
     for r in rows:
         d = dict(r)
@@ -1573,7 +1574,14 @@ def logs_page(request: Request, severity: str = "", q: str = ""):
         d["ts_text"] = r["ts"].strftime("%m-%d %H:%M:%S") if r["ts"] else ""
         out.append(d)
     return templates.TemplateResponse(
-        request, "logs.html", dict(rows=out, severity=severity, q=q)
+        request,
+        "logs.html",
+        dict(
+            rows=out,
+            severity=severity,
+            q=q,
+            log_retention_days=log_retention_days,
+        ),
     )
 
 

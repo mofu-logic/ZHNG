@@ -3,7 +3,7 @@
 {% block content %}
 <div style="display:flex; align-items:center; gap:10px; margin:20px 0 8px">
   <h2 style="margin:0">優待メモ</h2>
-  <span class="help tip-right" style="margin-left:0" tabindex="0" data-tip="株主優待の申込書・優待品の到着時期やチケットの期限を管理します。表示されるのは、配当・優待マスタで優待があり、現在保有している銘柄だけです。">?</span>
+  <span class="help tip-right" style="margin-left:0" tabindex="0" data-tip="株主優待の申込書・優待品の到着日やチケットの期限を管理します。表示されるのは、配当・優待マスタで優待があり、現在保有している銘柄だけです。">?</span>
 </div>
 {% if deadline_alerts %}
 <h2>優待期限アラート</h2>
@@ -30,8 +30,8 @@
 <div class="tblwrap" style="margin-top:10px">
 <table id="benefit-memos">
   <thead><tr>
-    <th class="sortable" data-type="str">コード</th><th class="sortable" data-type="str">会社名</th><th class="sortable" data-type="str">株主番号</th><th class="sortable" data-type="str">期限</th><th class="sortable" data-type="str">期限2</th>
-    <th class="sortable" data-type="str">配達待ち</th><th class="sortable" data-type="str">ステータス</th><th class="sortable" data-type="str">申込書到着時期</th><th class="sortable" data-type="str">申込書到着時期2</th><th class="sortable" data-type="str">優待品到着時期</th><th class="sortable" data-type="str">優待品到着時期2</th><th></th>
+    <th class="sortable" data-type="str">銘柄コード</th><th class="sortable" data-type="str">銘柄名</th><th class="sortable" data-type="str">株主番号</th><th class="sortable" data-type="str">期限</th><th class="sortable" data-type="str">期限2</th>
+    <th class="sortable" data-type="str">配達待ち</th><th class="sortable" data-type="str">ステータス</th><th class="sortable" data-type="str">申込書到着日</th><th class="sortable" data-type="str">申込書到着日2</th><th class="sortable" data-type="str">優待品到着日</th><th class="sortable" data-type="str">優待品到着日2</th><th></th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
@@ -118,16 +118,16 @@
       const statusLabel = mkLabel('ステータス');
       const statusInput = mkText(cur.status);
       statusLabel.appendChild(statusInput);
-      const f1Label = mkLabel('申込書到着時期');
+      const f1Label = mkLabel('申込書到着日');
       const f1Input = mkDate(cur.form_arrival_1);
       f1Label.appendChild(f1Input);
-      const f2Label = mkLabel('申込書到着時期2');
+      const f2Label = mkLabel('申込書到着日2');
       const f2Input = mkDate(cur.form_arrival_2);
       f2Label.appendChild(f2Input);
-      const i1Label = mkLabel('優待品到着時期');
+      const i1Label = mkLabel('優待品到着日');
       const i1Input = mkDate(cur.item_arrival_1);
       i1Label.appendChild(i1Input);
-      const i2Label = mkLabel('優待品到着時期2');
+      const i2Label = mkLabel('優待品到着日2');
       const i2Input = mkDate(cur.item_arrival_2);
       i2Label.appendChild(i2Input);
       form.append(noLabel, d1Label, d2Label, waitLabel, statusLabel,
