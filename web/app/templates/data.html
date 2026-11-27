@@ -38,7 +38,7 @@
   <thead><tr><th>日付</th><th class="num">銘柄数</th></tr></thead>
   <tbody>
   {% for d in daily %}
-    <tr><td>{{ d.snap_date }}</td><td class="num">{{ d.codes }}</td></tr>
+    <tr><td class="date">{{ d.snap_date }}</td><td class="num">{{ d.codes }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -54,7 +54,7 @@
       <td class="code">{{ p.code }}</td>
       <td><span class="name">{{ p.name or '' }}</span></td>
       <td class="num">{{ p.price|price }}</td>
-      <td>{{ p.captured_at.strftime('%Y/%m/%d %H:%M') }}</td>
+      <td class="date">{{ p.captured_at.strftime('%Y/%m/%d %H:%M') }}</td>
     </tr>
   {% endfor %}
   </tbody>

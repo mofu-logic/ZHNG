@@ -356,8 +356,9 @@
             ev.shares_before + ' → ' + ev.shares_after + '（' + (ev.delta_shares > 0 ? '+' : '') + ev.delta_shares + '）',
             fmtPrice(ev.avg_price_before) + ' → ' + fmtPrice(ev.avg_price_after),
           ];
-          cells.forEach(c => {
+          cells.forEach((c, i) => {
             const td = document.createElement('td');
+            if (i === 0) td.className = 'date';
             td.textContent = c;
             tr.appendChild(td);
           });

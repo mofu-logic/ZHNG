@@ -13,12 +13,12 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td class="code">{{ r.code }}<br><span class="code">登録 {{ r.created_on or '―' }}</span></td>
+      <td class="code date">{{ r.code }}<br><span class="code">登録 {{ r.created_on or '―' }}</span></td>
       <td><span class="name">{{ r.name or '' }}</span></td>
       <td class="num" data-v="{{ r.dividend_auto if r.dividend_auto is not none else (r.dividend_forecast or 0) }}">{{ r.dividend_auto if r.dividend_auto is not none else (r.dividend_forecast if r.dividend_forecast is not none else '―') }}</td>
       <td class="num" data-v="{{ r.benefit_value or 0 }}">{% if r.benefit_value is not none %}{{ r.benefit_value|yen }}{% else %}―{% endif %}</td>
       <td>{% if r.benefit_desc %}{% if r.benefit_desc|length > 20 %}<span class="memo-tip" data-tip="{{ r.benefit_desc }}">{{ r.benefit_desc[:20] }}…</span>{% else %}{{ r.benefit_desc }}{% endif %}{% endif %}</td>
-      <td>{{ r.judgment_on or '' }}</td>
+      <td class="date">{{ r.judgment_on or '' }}</td>
       <td>{% if r.judgment_note %}{% if r.judgment_note|length > 20 %}<span class="memo-tip" data-tip="{{ r.judgment_note }}">{{ r.judgment_note[:20] }}…</span>{% else %}{{ r.judgment_note }}{% endif %}{% endif %}</td>
       <td>{{ r.policy or '' }}</td>
       <td>{{ '候補' if r.funding_target else '―' }}</td>
