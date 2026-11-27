@@ -32,27 +32,17 @@ from app.yahoo import (
 logger = logging.getLogger("stock-app")
 
 
-def _store_quote(conn, code, price, fields, snap_date, run_id=None,
-                 update_dividend=True):
-    """Save one fetched quote: the raw price point, the daily
-    snapshot, and (for held stocks only) the dividend master
-    auto-update with its change record. Candidates pass
-    update_dividend=False so research stocks never enter the
-    dividend/benefit master. The caller commits."""
-    div = fields.get("1株配当（会社予想）")
+def _store_snapshot(conn, code, snap_date, price, fields):
+    """Upsert one row of daily_snapshots from parsed page fields.
+
+    Missing fields are stored (and, on a same-day refetch, overwritten)
+    as NULL: the stock path has always replaced the whole row. The
+    Nikkei path passes only the OHLC fields, so its other columns
+    stay NULL. Sharing one UPDATE SET over all value columns relies
+    on each code's row being written by exactly one path — for N225
+    the extra columns are always NULL, so overwriting them with NULL
+    changes nothing observable."""
     volume = fields.get("出来高")
-    conn.execute(
-        "INSERT INTO price_points(code, captured_at, price,"
-        " day_high, day_low, volume)"
-        " VALUES (%s, now(), %s, %s, %s, %s)",
-        (
-            code,
-            price,
-            fields.get("高値"),
-            fields.get("安値"),
-            int(volume) if volume is not None else None,
-        ),
-    )
     conn.execute(
         "INSERT INTO daily_snapshots(code, snap_date, close_price,"
         " prev_close, open_price, day_high, day_low, volume,"
@@ -77,12 +67,36 @@ def _store_quote(conn, code, price, fields, snap_date, run_id=None,
             fields.get("安値"),
             int(volume) if volume is not None else None,
             fields.get("時価総額"),
-            div,
+            fields.get("1株配当（会社予想）"),
             fields.get("配当利回り（会社予想）"),
             fields.get("PER（会社予想）"),
             fields.get("PBR（実績）"),
         ),
     )
+
+
+def _store_quote(conn, code, price, fields, snap_date, run_id=None,
+                 update_dividend=True):
+    """Save one fetched quote: the raw price point, the daily
+    snapshot, and (for held stocks only) the dividend master
+    auto-update with its change record. Candidates pass
+    update_dividend=False so research stocks never enter the
+    dividend/benefit master. The caller commits."""
+    div = fields.get("1株配当（会社予想）")
+    volume = fields.get("出来高")
+    conn.execute(
+        "INSERT INTO price_points(code, captured_at, price,"
+        " day_high, day_low, volume)"
+        " VALUES (%s, now(), %s, %s, %s, %s)",
+        (
+            code,
+            price,
+            fields.get("高値"),
+            fields.get("安値"),
+            int(volume) if volume is not None else None,
+        ),
+    )
+    _store_snapshot(conn, code, snap_date, price, fields)
     if div is not None and update_dividend:
         old_row = conn.execute(
             "SELECT dividend_forecast FROM dividend_benefits"
@@ -286,24 +300,18 @@ async def fetch_all(note="manual", *, db=_default_db, lock):
                         raise RuntimeError("index price not found in page")
                     snap_date = (datetime.now(JST) - timedelta(hours=9)).date()
                     with db() as conn:
-                        conn.execute(
-                            "INSERT INTO daily_snapshots(code, snap_date, close_price,"
-                            " prev_close, open_price, day_high, day_low, volume,"
-                            " market_cap_m, dividend_forecast, dividend_yield, per, pbr)"
-                            " VALUES ('N225',%s,%s,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL,NULL)"
-                            " ON CONFLICT (code, snap_date) DO UPDATE SET"
-                            " close_price=EXCLUDED.close_price,"
-                            " prev_close=EXCLUDED.prev_close,"
-                            " open_price=EXCLUDED.open_price, day_high=EXCLUDED.day_high,"
-                            " day_low=EXCLUDED.day_low",
-                            (
-                                snap_date,
-                                nprice,
-                                nfields.get("前日終値"),
-                                nfields.get("始値"),
-                                nfields.get("高値"),
-                                nfields.get("安値"),
-                            ),
+                        # Only the OHLC fields are passed: the parsed
+                        # page fields can carry more (e.g. volume), but
+                        # an index snapshot keeps the rest NULL.
+                        _store_snapshot(
+                            conn,
+                            "N225",
+                            snap_date,
+                            nprice,
+                            {
+                                key: nfields.get(key)
+                                for key in ("前日終値", "始値", "高値", "安値")
+                            },
                         )
                         conn.commit()
             except Exception:
