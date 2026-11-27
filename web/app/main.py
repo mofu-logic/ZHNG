@@ -51,6 +51,7 @@ from app.yahoo import (
     suffix_for_market,
 )
 from app.services import (
+    BENEFIT_MEMO_FIELDS,
     candidates_at_target,
     candidate_exists,
     create_buy,
@@ -522,14 +523,7 @@ def benefit_memos_page(request: Request):
     with db() as conn:
         rows = [_benefit_memo_out(r) for r in list_benefit_memo_rows(conn)]
     editor = {
-        r["code"]: {
-            field: r[field]
-            for field in (
-                "shareholder_no", "deadline_1", "deadline_2",
-                "delivery_waiting", "status", "form_arrival_1",
-                "form_arrival_2", "item_arrival_1", "item_arrival_2",
-            )
-        }
+        r["code"]: {field: r[field] for field in BENEFIT_MEMO_FIELDS}
         for r in rows
     }
     return templates.TemplateResponse(
