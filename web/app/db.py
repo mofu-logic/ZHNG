@@ -58,6 +58,12 @@ CREATE TABLE IF NOT EXISTS app_logs(
 CREATE INDEX IF NOT EXISTS app_logs_ts_idx ON app_logs(ts DESC);
 CREATE TABLE IF NOT EXISTS candidates(
   code text PRIMARY KEY, added_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS benefit_memos(
+  code text PRIMARY KEY, shareholder_no text,
+  deadline_1 date, deadline_2 date,
+  delivery_waiting boolean NOT NULL DEFAULT FALSE, status text,
+  form_arrival_1 date, form_arrival_2 date,
+  item_arrival_1 date, item_arrival_2 date);
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS policy text;
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS memo text;
 ALTER TABLE candidates ADD COLUMN IF NOT EXISTS target_price numeric;
