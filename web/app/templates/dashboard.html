@@ -103,9 +103,6 @@
       </label>
       <label>平均取得単価 <input type="number" name="avg_price" step="any" min="0" required></label>
       <label>株数 <input type="number" name="shares" min="0" required></label>
-      <label>貸株数 <input type="number" name="lent_shares" min="0" value="0"></label>
-      <label>発注数 <input type="number" name="ordered_shares" min="0" value="0"></label>
-      <label>保管区分 <input type="text" name="custody_type"></label>
     </form>
     <div class="dlg-btns">
       <button type="button" class="dlg-cancel" id="holding-add-cancel">キャンセル</button>
@@ -223,9 +220,6 @@
       account_type: fd.get('account_type'),
       avg_price: numOrNull(fd.get('avg_price')),
       shares: intOrNull(fd.get('shares')),
-      lent_shares: intOrNull(fd.get('lent_shares')) || 0,
-      ordered_shares: intOrNull(fd.get('ordered_shares')) || 0,
-      custody_type: strOrNull(fd.get('custody_type')),
     };
     const r = await fetch('/api/v1/holdings', {
       method: 'POST',
