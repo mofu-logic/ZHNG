@@ -744,16 +744,19 @@ def api_buys_list():
 @app.post("/api/v1/buys", status_code=201, response_model=BuyOut, tags=["buys"])
 def api_buys_create(payload: BuyIn):
     fetched = None
-    if payload.name is None and buy_linkage_applies(
+    if buy_linkage_applies(
         account_type=payload.account_type, status=payload.status,
         shares=payload.shares, avg_price=payload.avg_price,
     ):
         # A linked buy for a code the stock master does not know yet
         # needs the master row first: fetch it from Yahoo, like
         # purchase-candidate registration, and refuse the buy itself
-        # when the fetch fails (nothing is registered then). When a
-        # name is supplied, the existing behavior stands (the master
-        # row is created from the supplied name, without a market).
+        # when the fetch fails (nothing is registered then). This
+        # holds whether or not a name was supplied: a master row
+        # created from the supplied name alone would have no market
+        # and fail every nightly fetch. The supplied name is still
+        # what buy_lots records; the fetched name fills it in only
+        # when none was supplied.
         with db() as conn:
             known = conn.execute(
                 "SELECT 1 FROM stocks WHERE code = %s", (payload.code,)
@@ -772,7 +775,10 @@ def api_buys_create(payload: BuyIn):
     with db() as conn:
         if fetched is not None:
             upsert_stock_info(conn, payload.code, fetched[0], fetched[1])
-        row = create_buy(conn, **payload.model_dump())
+        kwargs = payload.model_dump()
+        if fetched is not None and kwargs["name"] is None:
+            kwargs["name"] = fetched[0]
+        row = create_buy(conn, **kwargs)
         conn.commit()
     emit_event("history.buy_created", id=row["id"], code=row["code"],
                status=row["status"])

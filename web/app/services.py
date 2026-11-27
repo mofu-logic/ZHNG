@@ -57,16 +57,28 @@ def _holding_row(conn, code, account_type):
 
 
 def _record_event(conn, *, code, account_type, kind, source_type,
-                  source_id, delta_shares, before, after, reverses=None):
+                  source_id, delta_shares, before, after, reverses=None,
+                  row_before=None):
+    # row_before carries the holdings row's other columns (lent /
+    # ordered shares, custody type) when the event deletes the row:
+    # without them a later reversal could not restore the row whole.
+    lent, ordered, custody = row_before or (None, None, None)
     conn.execute(
         "INSERT INTO holding_events(code, account_type, kind,"
         " source_type, source_id, delta_shares, shares_before,"
         " shares_after, avg_price_before, avg_price_after,"
-        " reverses_event_id)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        " lent_shares_before, ordered_shares_before,"
+        " custody_type_before, reverses_event_id)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (code, account_type, kind, source_type, source_id, delta_shares,
-         before[0], after[0], before[1], after[1], reverses),
+         before[0], after[0], before[1], after[1],
+         lent, ordered, custody, reverses),
     )
+
+
+def _row_extras(row):
+    """The holdings columns a shares/price restore alone would lose."""
+    return (row["lent_shares"], row["ordered_shares"], row["custody_type"])
 
 
 def _linkage_event(conn, source_type, source_id, kind):
@@ -104,16 +116,22 @@ def _apply_reversal(conn, event, *, kind, source_type, source_id):
         (holding["shares"], holding["avg_price"]) if holding else (0, None)
     )
     target = (event["shares_before"], event["avg_price_before"])
+    row_before = None
     if target[0] == 0:
         if holding is not None:
+            row_before = _row_extras(holding)
             conn.execute(
                 "DELETE FROM holdings WHERE id = %s", (holding["id"],)
             )
     elif holding is None:
         conn.execute(
-            "INSERT INTO holdings(code, account_type, avg_price, shares)"
-            " VALUES (%s, %s, %s, %s)",
-            (code, account_type, target[1], target[0]),
+            "INSERT INTO holdings(code, account_type, avg_price, shares,"
+            " lent_shares, ordered_shares, custody_type)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (code, account_type, target[1], target[0],
+             event["lent_shares_before"] or 0,
+             event["ordered_shares_before"] or 0,
+             event["custody_type_before"]),
         )
     else:
         conn.execute(
@@ -126,6 +144,7 @@ def _apply_reversal(conn, event, *, kind, source_type, source_id):
         source_type=source_type, source_id=source_id,
         delta_shares=-event["delta_shares"],
         before=current, after=target, reverses=event["id"],
+        row_before=row_before,
     )
 
 
@@ -262,8 +281,10 @@ def _apply_sale_linkage(conn, sale, holding):
     ex = sale["executed_shares"]
     remaining = holding["shares"] - ex
     before = (holding["shares"], holding["avg_price"])
+    row_before = None
     if remaining == 0:
         after = (0, None)
+        row_before = _row_extras(holding)
         conn.execute("DELETE FROM holdings WHERE id = %s", (holding["id"],))
     else:
         after = (remaining, holding["avg_price"])
@@ -276,6 +297,7 @@ def _apply_sale_linkage(conn, sale, holding):
         conn, code=sale["code"], account_type=sale["account_type"],
         kind="sell", source_type="sale", source_id=sale["id"],
         delta_shares=-ex, before=before, after=after,
+        row_before=row_before,
     )
 
 

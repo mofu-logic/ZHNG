@@ -70,7 +70,12 @@ CREATE TABLE IF NOT EXISTS holding_events(
   delta_shares integer NOT NULL,
   shares_before integer NOT NULL, shares_after integer NOT NULL,
   avg_price_before numeric, avg_price_after numeric,
+  lent_shares_before integer, ordered_shares_before integer,
+  custody_type_before text,
   reverses_event_id integer, created_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE holding_events ADD COLUMN IF NOT EXISTS lent_shares_before integer;
+ALTER TABLE holding_events ADD COLUMN IF NOT EXISTS ordered_shares_before integer;
+ALTER TABLE holding_events ADD COLUMN IF NOT EXISTS custody_type_before text;
 ALTER TABLE buy_lots ADD COLUMN IF NOT EXISTS account_type text;
 ALTER TABLE buy_lots ADD COLUMN IF NOT EXISTS cancelled_at timestamptz;
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS account_type text;
