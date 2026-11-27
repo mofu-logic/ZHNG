@@ -15,6 +15,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from typing import Annotated
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -23,7 +24,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from psycopg.rows import dict_row
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.observability import (
     OtelBridgeHandler,
@@ -1341,10 +1342,11 @@ def _benefit_out(r):
 
 
 class BuyIn(BaseModel):
-    code: str | None = None
+    code: Annotated[str, StringConstraints(strip_whitespace=True,
+                                           min_length=1)]
     name: str | None = None
-    avg_price: float | None = None
-    shares: int | None = None
+    avg_price: float | None = Field(default=None, ge=0)
+    shares: int | None = Field(default=None, ge=0)
     purchase_date: date | None = None
     policy: str | None = None
     trigger_note: str | None = None
@@ -1353,14 +1355,15 @@ class BuyIn(BaseModel):
 
 
 class SaleIn(BaseModel):
-    code: str | None = None
+    code: Annotated[str, StringConstraints(strip_whitespace=True,
+                                           min_length=1)]
     name: str | None = None
-    buy_price: float | None = None
-    shares: int | None = None
+    buy_price: float | None = Field(default=None, ge=0)
+    shares: int | None = Field(default=None, ge=0)
     purchase_date: date | None = None
-    sell_price: float | None = None
-    sell_shares: int | None = None
-    executed_shares: int | None = None
+    sell_price: float | None = Field(default=None, ge=0)
+    sell_shares: int | None = Field(default=None, ge=0)
+    executed_shares: int | None = Field(default=None, ge=0)
     order_start_date: date | None = None
     executed_date: date | None = None
     profit: float | None = None

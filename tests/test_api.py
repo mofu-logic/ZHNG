@@ -4,6 +4,8 @@ The API is the single interface for trades, the dividend/benefit
 master and the settings: the web UI uses it, and future integrations
 use the same paths and shapes (see ARCHITECTURE.md).
 """
+import pytest
+
 from conftest import seed_stock_holding
 
 
@@ -167,3 +169,126 @@ def test_api_validation(client, db):
     # Unknown trade ids are 404.
     assert client.delete("/api/v1/buys/424242").status_code == 404
     assert client.delete("/api/v1/sales/424242").status_code == 404
+
+
+# --- R3: BuyIn / SaleIn require code; numeric fields reject negatives ---
+#
+# The history screen (templates/history.html) sends code always for buys
+# (the input is `required`) and may send it blank for sells (blank becomes
+# null via strOrNull). A trade without a code is meaningless either way,
+# so code is required for both. Price and share counts stay optional:
+# the buy form lets an unfilled order (status 注文中) be registered with
+# neither price nor shares, and the sell form leaves every other field
+# blankable (an unfilled sell order has no sell price / executed shares
+# yet, and the original buy price / share count may be unknown).
+# Negative prices / share counts are never valid, so they get ge=0.
+# Profit is the exception: a loss is a real outcome, so it stays
+# unbounded (see test_sale_negative_profit_accepted).
+
+
+def test_buy_requires_code(client, db):
+    # R3: POST /api/v1/buys {} used to return 201 and create an all-NULL row.
+    r = client.post("/api/v1/buys", json={})
+    assert r.status_code == 422
+    # A payload with everything except the code is rejected the same way.
+    r = client.post(
+        "/api/v1/buys",
+        json={"name": "テスト銘柄", "avg_price": 900, "shares": 50,
+              "purchase_date": "2026-11-20", "status": "注文中"},
+    )
+    assert r.status_code == 422
+    assert db.execute("SELECT count(*) c FROM buy_lots").fetchone()["c"] == 0
+
+
+def test_sale_requires_code(client, db):
+    # R3: POST /api/v1/sales {} used to return 201 (status auto-derived
+    # to 注文中) and create an all-NULL row.
+    r = client.post("/api/v1/sales", json={})
+    assert r.status_code == 422
+    r = client.post(
+        "/api/v1/sales",
+        json={"name": "テスト銘柄", "buy_price": 100, "sell_price": 200,
+              "sell_shares": 100, "executed_shares": 100, "status": "約定済"},
+    )
+    assert r.status_code == 422
+    assert db.execute("SELECT count(*) c FROM sales").fetchone()["c"] == 0
+
+
+@pytest.mark.parametrize("code", ["", "   "])
+def test_buy_empty_or_blank_code_rejected(client, db, code):
+    # R3-1: {"code": ""} used to return 201 and create a row with an
+    # empty code; a whitespace-only code is equally meaningless.
+    r = client.post("/api/v1/buys", json={"code": code})
+    assert r.status_code == 422
+    assert db.execute("SELECT count(*) c FROM buy_lots").fetchone()["c"] == 0
+
+
+@pytest.mark.parametrize("code", ["", "   "])
+def test_sale_empty_or_blank_code_rejected(client, db, code):
+    r = client.post("/api/v1/sales", json={"code": code})
+    assert r.status_code == 422
+    assert db.execute("SELECT count(*) c FROM sales").fetchone()["c"] == 0
+
+
+def test_buy_code_with_surrounding_spaces_is_trimmed(client, db):
+    # R3-1: a padded code is normalized to the bare code, not rejected
+    # or stored with the spaces (same trimming the screen already does).
+    r = client.post("/api/v1/buys", json={"code": " 9999 "})
+    assert r.status_code == 201
+    assert db.execute(
+        "SELECT code FROM buy_lots").fetchone()["code"] == "9999"
+
+
+@pytest.mark.parametrize("field", ["avg_price", "shares"])
+def test_buy_negative_values_rejected(client, db, field):
+    payload = {"code": "9999"}
+    payload[field] = -1
+    r = client.post("/api/v1/buys", json=payload)
+    assert r.status_code == 422
+    assert db.execute("SELECT count(*) c FROM buy_lots").fetchone()["c"] == 0
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["buy_price", "sell_price", "shares", "sell_shares", "executed_shares"],
+)
+def test_sale_negative_values_rejected(client, db, field):
+    payload = {"code": "9999"}
+    payload[field] = -1
+    r = client.post("/api/v1/sales", json=payload)
+    assert r.status_code == 422
+    assert db.execute("SELECT count(*) c FROM sales").fetchone()["c"] == 0
+
+
+def test_buy_unfilled_order_without_price_or_shares(client, db):
+    # Guard: avg_price / shares must stay optional, because the screen
+    # registers unfilled orders (注文中) with neither filled in yet.
+    r = client.post(
+        "/api/v1/buys",
+        json={"code": "9999", "name": "テスト銘柄", "status": "注文中"},
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["status"] == "注文中"
+    assert body["avg_price"] is None
+    assert body["shares"] is None
+
+
+def test_buy_zero_price_and_shares_accepted(client, db):
+    # Guard: the bound is ge=0, not gt=0, so zero stays acceptable.
+    r = client.post(
+        "/api/v1/buys", json={"code": "9999", "avg_price": 0, "shares": 0}
+    )
+    assert r.status_code == 201
+
+
+def test_sale_negative_profit_accepted(client, db):
+    # Guard: profit must NOT get a ge=0 bound — a loss is a real outcome.
+    r = client.post(
+        "/api/v1/sales",
+        json={"code": "9999", "name": "テスト銘柄", "buy_price": 200,
+              "sell_price": 100, "sell_shares": 10, "executed_shares": 10,
+              "profit": -1000, "status": "約定済"},
+    )
+    assert r.status_code == 201
+    assert r.json()["profit"] == -1000.0
