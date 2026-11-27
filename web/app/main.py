@@ -233,6 +233,7 @@ async def request_logging(request: Request, call_next):
 def dashboard(request: Request):
     with db() as conn:
         st = get_settings(conn)
+        fetch_start_time = app_config(conn)["fetch_start_time"]
         rows = conn.execute(
             """
             WITH latest AS (
@@ -311,7 +312,8 @@ def dashboard(request: Request):
     return templates.TemplateResponse(
         request,
         "dashboard.html",
-        dict(items=items, kpi=kpi, price_at=price_at, policies=policies, accounts=accounts),
+        dict(items=items, kpi=kpi, price_at=price_at, policies=policies, accounts=accounts,
+             fetch_start_time=fetch_start_time),
     )
 
 
