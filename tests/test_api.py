@@ -76,7 +76,7 @@ def test_api_reads(client, db):
 KPI_PAYLOAD = dict(
     tax_rate_pct=20.315, target_dividend_total=1200000,
     target_yield_buy_pct=3.0, target_yield_now_pct=3.5,
-    target_yield_value_pct=4.0,
+    target_yield_portfolio_pct=4.0,
 )
 
 

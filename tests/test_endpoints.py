@@ -193,7 +193,7 @@ def test_settings_monthly_target_is_derived(client, db):
             "target_dividend_total": 1370347,
             "target_yield_buy_pct": 3.0,
             "target_yield_now_pct": 3.5,
-            "target_yield_value_pct": 4.0,
+            "target_yield_portfolio_pct": 4.0,
         },
     )
     assert r.status_code == 200
@@ -207,7 +207,7 @@ def test_settings_monthly_target_is_derived(client, db):
             pass  # non-numeric settings (otel_enabled / otel_endpoint)
     assert rows["target_monthly_income"] == 90997.0
     assert rows["tax_rate"] == pytest.approx(0.20315)
-    assert rows["target_yield_value"] == pytest.approx(0.04)
+    assert rows["target_yield_portfolio"] == pytest.approx(0.04)
     assert client.get("/api/v1/settings").json()["target_monthly_income"] == 90997
 
 

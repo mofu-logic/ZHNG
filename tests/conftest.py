@@ -107,7 +107,7 @@ def seed_settings(conn, **overrides):
         "target_monthly_income": "79685",
         "target_yield_buy": "0.03",
         "target_yield_now": "0.035",
-        "target_yield_value": "0.04",
+        "target_yield_portfolio": "0.04",
     }
     values.update(overrides)
     for k, v in values.items():

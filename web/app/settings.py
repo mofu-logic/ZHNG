@@ -47,13 +47,13 @@ def settings_view(st):
         target_monthly_income=round_half_up(total * (1 - tax) / 12),
         target_yield_buy_pct=(st.get("target_yield_buy", 0) * 100),
         target_yield_now_pct=(st.get("target_yield_now", 0) * 100),
-        target_yield_value_pct=(st.get("target_yield_value", 0.04) * 100),
+        target_yield_portfolio_pct=(st.get("target_yield_portfolio", 0.04) * 100),
     )
 
 
 def update_settings(conn, *, tax_rate_pct, target_dividend_total,
                     target_yield_buy_pct, target_yield_now_pct,
-                    target_yield_value_pct, log_retention_days=90,
+                    target_yield_portfolio_pct, log_retention_days=90,
                     otel_enabled=False, otel_endpoint=None,
                     swagger_enabled=False,
                     fetch_start_time=DEFAULT_FETCH_START_TIME,
@@ -68,7 +68,7 @@ def update_settings(conn, *, tax_rate_pct, target_dividend_total,
         "target_monthly_income": float(monthly),
         "target_yield_buy": target_yield_buy_pct / 100,
         "target_yield_now": target_yield_now_pct / 100,
-        "target_yield_value": target_yield_value_pct / 100,
+        "target_yield_portfolio": target_yield_portfolio_pct / 100,
         "log_retention_days": float(log_retention_days),
         "benefit_deadline_alert_days": float(benefit_deadline_alert_days),
     }

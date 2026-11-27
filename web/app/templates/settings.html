@@ -28,7 +28,7 @@
       </tr>
       <tr>
         <td>目標：配当利回り（評価額ベース）（%）</td>
-        <td><input type="number" name="target_yield_value_pct" step="0.01" min="0" value="{{ target_yield_value_pct }}" style="width:140px"></td>
+        <td><input type="number" name="target_yield_portfolio_pct" step="0.01" min="0" value="{{ target_yield_portfolio_pct }}" style="width:140px"></td>
       </tr>
     </tbody>
   </table>
@@ -108,7 +108,7 @@
       target_dividend_total: Number(f.get('target_dividend_total')),
       target_yield_buy_pct: Number(f.get('target_yield_buy_pct')),
       target_yield_now_pct: Number(f.get('target_yield_now_pct')),
-      target_yield_value_pct: Number(f.get('target_yield_value_pct')),
+      target_yield_portfolio_pct: Number(f.get('target_yield_portfolio_pct')),
       log_retention_days: Number(f.get('log_retention_days')),
       otel_enabled: form.querySelector('[name="otel_enabled"]').checked,
       otel_endpoint: strOrNull(f.get('otel_endpoint')),
