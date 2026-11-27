@@ -727,11 +727,11 @@ class BenefitIn(BaseModel):
 
 
 class SettingsIn(BaseModel):
-    tax_rate_pct: float
-    target_dividend_total: float
-    target_yield_buy_pct: float
-    target_yield_now_pct: float
-    target_yield_portfolio_pct: float
+    tax_rate_pct: float = Field(ge=0, le=100)
+    target_dividend_total: float = Field(ge=0)
+    target_yield_buy_pct: float = Field(ge=0)
+    target_yield_now_pct: float = Field(ge=0)
+    target_yield_portfolio_pct: float = Field(ge=0)
     log_retention_days: int = Field(default=90, ge=1, le=3650)
     otel_enabled: bool = False
     otel_endpoint: str | None = None
