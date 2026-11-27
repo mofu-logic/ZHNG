@@ -137,26 +137,10 @@
 <script>
   const tbody = document.querySelector('#holdings tbody');
   const rows = Array.from(tbody.querySelectorAll('tr'));
-  // sorting
-  document.querySelectorAll('#holdings th.sortable').forEach((th, idx) => {
-    th.addEventListener('click', () => {
-      const type = th.dataset.type;
-      const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
-      document.querySelectorAll('#holdings th').forEach(h => delete h.dataset.dir);
-      th.dataset.dir = dir;
-      const sorted = rows.slice().sort((a, b) => {
-        const ca = a.children[idx], cb = b.children[idx];
-        let va, vb;
-        if (type === 'num') { va = parseFloat(ca.dataset.v || 0); vb = parseFloat(cb.dataset.v || 0); }
-        else { va = ca.textContent.trim(); vb = cb.textContent.trim(); }
-        const cmp = va < vb ? -1 : va > vb ? 1 : 0;
-        return dir === 'asc' ? cmp : -cmp;
-      });
-      sorted.forEach(r => tbody.appendChild(r));
-      th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (dir === 'asc' ? ' ▲' : ' ▼');
-      stripe();
-    });
-  });
+  // Column sorting itself is wired by the shared script in base.html;
+  // this page only keeps the filter-aware striping below, which the
+  // filter and the shared sort both leave consistent (the shared
+  // striping skips hidden rows, same as stripe()).
   function stripe() {
     let i = 0;
     Array.from(tbody.querySelectorAll('tr')).forEach(r => {

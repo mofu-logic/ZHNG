@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import memo_tip %}
 {% block content %}
 <div style="display:flex; align-items:center; gap:10px; margin:20px 0 8px">
   <h2 style="margin:0">優待メモ</h2>
@@ -41,7 +42,7 @@
       <td class="date">{{ r.deadline_1 or '' }}</td>
       <td class="date">{{ r.deadline_2 or '' }}</td>
       <td>{{ '〇' if r.delivery_waiting else '―' }}</td>
-      <td>{% if r.status %}{% if r.status|length > 20 %}<span class="memo-tip" data-tip="{{ r.status }}">{{ r.status[:20] }}…</span>{% else %}{{ r.status }}{% endif %}{% endif %}</td>
+      <td>{{ memo_tip(r.status) }}</td>
       <td class="date">{{ r.form_arrival_1 or '' }}</td>
       <td class="date">{{ r.form_arrival_2 or '' }}</td>
       <td class="date">{{ r.item_arrival_1 or '' }}</td>
@@ -58,38 +59,6 @@
 <script>
   // Updates go through the JSON API (/api/v1), same as external clients.
   const EDITOR = {{ editor|tojson }};
-
-  // Column sorting, same behavior as the other tables.
-  const btbody = document.querySelector('#benefit-memos tbody');
-  if (btbody) {
-    const brows = Array.from(btbody.querySelectorAll('tr'));
-    const stripeMemos = () => {
-      let i = 0;
-      Array.from(btbody.querySelectorAll('tr')).forEach(r => {
-        r.classList.toggle('alt', i % 2 === 1);
-        i++;
-      });
-    };
-    document.querySelectorAll('#benefit-memos th.sortable').forEach((th, idx) => {
-      th.addEventListener('click', () => {
-        const type = th.dataset.type;
-        const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
-        document.querySelectorAll('#benefit-memos th').forEach(h => delete h.dataset.dir);
-        th.dataset.dir = dir;
-        const sorted = brows.slice().sort((a, b) => {
-          const ca = a.children[idx], cb = b.children[idx];
-          let va, vb;
-          if (type === 'num') { va = parseFloat(ca.dataset.v || 0); vb = parseFloat(cb.dataset.v || 0); }
-          else { va = ca.textContent.trim(); vb = cb.textContent.trim(); }
-          const cmp = va < vb ? -1 : va > vb ? 1 : 0;
-          return dir === 'asc' ? cmp : -cmp;
-        });
-        sorted.forEach(r => btbody.appendChild(r));
-        th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (dir === 'asc' ? ' ▲' : ' ▼');
-        stripeMemos();
-      });
-    });
-  }
 
   // Editor dialog for the memo fields (same modal shell as the
   // master page editor, with form fields).

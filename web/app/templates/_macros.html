@@ -1,0 +1,7 @@
+{# Shared rendering macros, imported by the page templates. #}
+
+{# Memo cell with hover tooltip: empty renders nothing, up to 20
+   chars renders as-is, longer text shows the first 20 chars + '…'
+   with the full text in the data-tip of a .memo-tip span (the hover
+   box itself is wired by the shared script in base.html). #}
+{% macro memo_tip(text) %}{% if text %}{% if text|length > 20 %}<span class="memo-tip" data-tip="{{ text }}">{{ text[:20] }}…</span>{% else %}{{ text }}{% endif %}{% endif %}{% endmacro %}
