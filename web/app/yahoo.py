@@ -121,8 +121,12 @@ def parse_profile_page(html):
 async def fetch_one_quote(code):
     """Fetch one code right now (used when a purchase candidate is
     registered). Tries each exchange suffix in EXCHANGE_SUFFIXES order.
-    Returns (market, name, price, fields); raises RuntimeError when
-    the code cannot be fetched at all."""
+    A 404 means the code is not on that exchange; any other non-200
+    answer is treated as transient, so the walk moves on to the next
+    suffix and only surfaces the last such error when every suffix
+    failed that way. Returns (market, name, price, fields); raises
+    RuntimeError when the code cannot be fetched at all."""
+    last_error = None
     async with httpx.AsyncClient(headers={"User-Agent": UA}, timeout=25) as client:
         for suffix, market in EXCHANGE_SUFFIXES:
             r = await client.get(
@@ -131,9 +135,12 @@ async def fetch_one_quote(code):
             if r.status_code == 404:
                 continue
             if r.status_code != 200:
-                raise RuntimeError(f"HTTP {r.status_code}")
+                last_error = RuntimeError(f"HTTP {r.status_code}")
+                continue
             price, fields = parse_jp_page(r.text)
             if price is None or price <= 0:
                 raise RuntimeError("price not found in page")
             return market, parse_stock_name(r.text, code), price, fields
+    if last_error is not None:
+        raise last_error
     raise RuntimeError("銘柄が見つかりませんでした")

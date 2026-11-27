@@ -302,6 +302,83 @@ def test_fetch_one_quote_falls_back_to_fukuoka(monkeypatch):
     assert price == 1000.0
 
 
+class StatusFakeClient:
+    """Answers per exchange suffix from a status mapping.
+
+    A 200 answer serves the JP page; any other status serves an error
+    body, and a suffix missing from the mapping gets a 404. Every
+    requested suffix is recorded in order so tests can pin how many
+    suffixes were tried and where the walk stopped.
+    """
+
+    def __init__(self, statuses, headers=None, timeout=None):
+        self.statuses = statuses
+        self.requested = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url):
+        suffix = url.rsplit(".", 1)[-1]
+        self.requested.append(suffix)
+        status = self.statuses.get(suffix, 404)
+        if status == 200:
+            return FakeResponse(200, JP_PAGE)
+        return FakeResponse(status, "error")
+
+
+def _install_status_client(monkeypatch, statuses):
+    client = StatusFakeClient(statuses)
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kw: client)
+    return client
+
+
+def test_fetch_one_quote_retries_after_429(monkeypatch):
+    # A transient 429 on .T must not end the walk: .N is tried next.
+    client = _install_status_client(monkeypatch, {"T": 429, "N": 200})
+    market, name, price, fields = asyncio.run(main.fetch_one_quote("2928"))
+    assert market == "名証"
+    assert price == 1000.0
+    # The walk stops at the first success: .S and .F are never requested.
+    assert client.requested == ["T", "N"]
+
+
+def test_fetch_one_quote_retries_after_5xx(monkeypatch):
+    # 5xx answers are transient too, across as many suffixes as needed.
+    client = _install_status_client(
+        monkeypatch, {"T": 500, "N": 503, "S": 200}
+    )
+    market, name, price, fields = asyncio.run(main.fetch_one_quote("2928"))
+    assert market == "札証"
+    assert price == 1000.0
+    assert client.requested == ["T", "N", "S"]
+
+
+def test_fetch_one_quote_raises_last_error_when_all_transient(monkeypatch):
+    client = _install_status_client(
+        monkeypatch, {"T": 429, "N": 500, "S": 502, "F": 503}
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        asyncio.run(main.fetch_one_quote("2928"))
+    # The error of the last suffix tried is the one that surfaces.
+    assert "503" in str(excinfo.value)
+    # Every suffix was tried exactly once, in EXCHANGE_SUFFIXES order.
+    assert client.requested == ["T", "N", "S", "F"]
+
+
+def test_fetch_one_quote_not_found_when_all_404(monkeypatch):
+    # 404 keeps its current meaning: the code is on none of the
+    # exchanges, reported as not found after all suffixes were tried.
+    client = _install_status_client(monkeypatch, {})
+    with pytest.raises(RuntimeError) as excinfo:
+        asyncio.run(main.fetch_one_quote("0000"))
+    assert "銘柄が見つかりませんでした" in str(excinfo.value)
+    assert client.requested == ["T", "N", "S", "F"]
+
+
 def test_fetch_stores_industry_once(fake_fetch, db, monkeypatch):
     from test_parse import PROFILE_PAGE
 
