@@ -36,7 +36,7 @@
       <td>{{ b.policy or '' }}</td>
       <td>{{ b.trigger_note or '' }}</td>
       <td class="memo">{{ b.note or '' }}</td>
-      <td><span class="tag">{{ b.status }}</span></td>
+      <td class="nowrap"><span class="tag">{{ b.status }}</span></td>
       <td><span class="tag">{{ b.link_state }}</span></td>
       <td>
         {% if not b.cancelled_at %}<button type="button" class="cancelbtn" data-cancel="buys" data-id="{{ b.id }}">取消</button>{% endif %}
@@ -81,7 +81,7 @@
       <td class="num">{{ s.sell_price|price }}</td>
       <td class="num">{{ s.executed_shares or 0 }} / {{ s.sell_shares or '' }}</td>
       <td class="num {{ 'pos' if (s.profit or 0) >= 0 else 'neg' }}">{{ s.profit|signed }}</td>
-      <td><span class="tag">{{ s.status }}</span></td>
+      <td class="nowrap"><span class="tag">{{ s.status }}</span></td>
       <td class="memo">{{ s.memo or '' }}</td>
       <td><span class="tag">{{ s.link_state }}</span></td>
       <td>
