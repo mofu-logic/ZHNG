@@ -122,14 +122,13 @@ BUY_HEADERS = [
     ("買付日", "str"),
     ("銘柄コード", "str"),
     ("銘柄名", "str"),
+    ("口座", "str"),
     ("取得単価", "num"),
     ("株数", "num"),
     ("購入方針", "str"),
     ("購入契機", "str"),
     ("メモ", "str"),
     ("約定状態", "str"),
-    ("口座区分", "str"),
-    ("保有への反映", "str"),
     (None, None),
 ]
 
@@ -138,13 +137,12 @@ SALE_HEADERS = [
     ("約定日", "str"),
     ("銘柄コード", "str"),
     ("銘柄名", "str"),
+    ("口座", "str"),
     ("売り単価", "num"),
     ("約定株数／注文株数", "num"),
     ("損益", "num"),
     ("約定状態", "str"),
     ("メモ", "str"),
-    ("口座区分", "str"),
-    ("保有への反映", "str"),
     (None, None),
 ]
 
@@ -206,23 +204,26 @@ def test_num_cells_carry_raw_sort_values(client, db):
                sell_shares=100, executed_shares=30)
     page = client.get("/history").text
 
+    # Cell indexes: the account column sits at index 3 in both
+    # tables (right after the stock name), shifting the numeric
+    # cells one place from the old layout.
     buy_row = _table_by_id(page, "buys")["rows"][0]
-    assert buy_row[3]["text"].strip() == "1,234.5"
-    assert float(buy_row[3]["attrs"]["data-v"]) == 1234.5
-    assert buy_row[4]["text"].strip() == "300"
-    assert float(buy_row[4]["attrs"]["data-v"]) == 300
+    assert buy_row[4]["text"].strip() == "1,234.5"
+    assert float(buy_row[4]["attrs"]["data-v"]) == 1234.5
+    assert buy_row[5]["text"].strip() == "300"
+    assert float(buy_row[5]["attrs"]["data-v"]) == 300
 
     sale_rows = _table_by_id(page, "sales")["rows"]
     profits = sorted(
-        float(r[6]["attrs"]["data-v"]) for r in sale_rows
+        float(r[7]["attrs"]["data-v"]) for r in sale_rows
     )
     assert profits == [-9000, 3000, 10000]
     for r in sale_rows:
-        assert float(r[4]["attrs"]["data-v"]) > 0  # sell price
-    partial = [r for r in sale_rows if r[5]["text"].strip() == "30 / 100"]
+        assert float(r[5]["attrs"]["data-v"]) > 0  # sell price
+    partial = [r for r in sale_rows if r[6]["text"].strip() == "30 / 100"]
     assert len(partial) == 1
     # The combined executed/ordered cell sorts by one raw count.
-    assert float(partial[0][5]["attrs"]["data-v"]) in (30, 100)
+    assert float(partial[0][6]["attrs"]["data-v"]) in (30, 100)
 
 
 def test_default_order_is_newest_first(client, db):
@@ -258,10 +259,21 @@ def test_cancelled_and_unlinked_rows_still_render(client, db):
     tables = _tables(page)
     rows = tables[0]["rows"]
     assert len(rows) == 2
-    by_state = {r[10]["text"].strip(): r for r in rows}
-    assert "取消済み" in by_state
-    assert "対象外" in by_state
+    # With the link-state column gone, the rows are told apart by
+    # the account cell (index 3, right after the stock name): the
+    # cancelled row is the linked one （特定）, the unlinked row's
+    # cell stays empty. The operation cell is the last (index 10).
+    by_account = {r[3]["text"].strip(): r for r in rows}
+    assert set(by_account) == {"特定", ""}
     # The cancelled row loses its cancel button, keeps delete.
-    assert by_state["取消済み"][11]["text"].strip() == "削除"
-    # The unlinked row's account type cell stays empty.
-    assert by_state["対象外"][9]["text"].strip() == ""
+    assert by_account["特定"][10]["text"].strip() == "削除"
+    # The unlinked row keeps both actions.
+    assert "取消" in by_account[""][10]["text"]
+    assert "削除" in by_account[""][10]["text"]
+    # No cell carries a link-state tag any more.
+    for r in rows:
+        assert len(r) == 11
+        texts = [c["text"].strip() for c in r]
+        assert "取消済み" not in texts
+        assert "対象外" not in texts
+        assert "反映済み" not in texts

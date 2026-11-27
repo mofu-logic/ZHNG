@@ -677,15 +677,22 @@ def test_history_page_linkage_ui(client, db):
     # registration names the account it links to.
     assert 'name="account_type"' in page
     assert "口座区分" in page
-    # Row states: the linked buy is reflected, the plain one is out
-    # of scope, and each row offers a cancel action.
-    assert "反映済み" in page
-    assert "対象外" in page
-    assert "取消" in page
+    # The link-state column is gone (owner decision: every row
+    # read 対象外 in production, so the tags carried no
+    # information; the dedicated spec lives in
+    # tests/test_history_link_state.py). Both rows still render,
+    # and each offers a cancel action.
+    assert "反映済み" not in page
+    assert "対象外" not in page
+    assert page.count('data-cancel="buys"') == 2
 
     assert client.post(f"/api/v1/buys/{linked['id']}/cancel").status_code == 200
     page = client.get("/history").text
-    assert "取消済み" in page
+    # No 取消済み tag either: the cancelled row is told apart only
+    # by losing its cancel button (delete stays).
+    assert "取消済み" not in page
+    assert page.count('data-cancel="buys"') == 1
+    assert page.count('data-del="buys"') == 2
 
 
 # ------------------------------------- named buys still fetch the master

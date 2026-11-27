@@ -314,7 +314,10 @@ def test_history_tables_show_account_type(client, db):
     heads = re.findall(r"<thead>(.*?)</thead>", page, re.S)
     assert len(heads) == 2
     for head in heads:
-        assert "口座区分" in head
+        # The table header uses the short label 口座 (the add
+        # dialogs keep 口座区分); the cell values are unchanged.
+        assert re.search(r">口座</th>", head)
+        assert "口座区分" not in head
     bodies = re.findall(r"<tbody>(.*?)</tbody>", page, re.S)
     assert len(bodies) == 2
     assert "NISA" in bodies[0]
