@@ -51,6 +51,7 @@ TABLES = [
     "buy_lots",
     "dividend_benefits",
     "holdings",
+    "holding_events",
     "stocks",
     "settings",
 ]

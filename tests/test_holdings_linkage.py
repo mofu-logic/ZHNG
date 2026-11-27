@@ -53,21 +53,6 @@ def _named_fake_client():
     return NamedClient
 
 
-@pytest.fixture(autouse=True)
-def _clean_events(db):
-    """holding_events arrives with this feature; until the table
-    exists there is nothing to clean (the event assertions below
-    fail on their own), and afterwards it is not part of the shared
-    TRUNCATE list yet."""
-    exists = db.execute(
-        "SELECT to_regclass('holding_events') AS t"
-    ).fetchone()["t"]
-    if exists:
-        db.execute("TRUNCATE holding_events RESTART IDENTITY")
-        db.commit()
-    yield
-
-
 def _events(db):
     exists = db.execute(
         "SELECT to_regclass('holding_events') AS t"

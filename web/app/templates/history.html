@@ -18,13 +18,16 @@
   <label>約定状態
     <select name="status"><option>約定済</option><option>注文中</option><option>一部約定</option></select>
   </label>
+  <label>口座区分
+    <select name="account_type"><option value="">指定なし</option><option>特定</option><option>NISA</option></select>
+  </label>
   <button type="submit">購入を追加</button>
 </form>
 <div class="tblwrap">
 <table>
   <thead><tr>
     <th>買付日</th><th>銘柄コード</th><th>銘柄名</th><th class="num">取得単価</th><th class="num">株数</th>
-    <th>購入方針</th><th>購入契機</th><th>メモ</th><th>約定状態</th><th></th>
+    <th>購入方針</th><th>購入契機</th><th>メモ</th><th>約定状態</th><th>口座区分</th><th>保有への反映</th><th></th>
   </tr></thead>
   <tbody>
   {% for b in buys %}
@@ -38,7 +41,12 @@
       <td>{{ b.trigger_note or '' }}</td>
       <td class="memo">{{ b.note or '' }}</td>
       <td><span class="tag">{{ b.status }}</span></td>
-      <td><button type="button" class="delbtn" data-del="buys" data-id="{{ b.id }}">削除</button></td>
+      <td>{{ b.account_type or '―' }}</td>
+      <td><span class="tag">{{ b.link_state }}</span></td>
+      <td>
+        {% if not b.cancelled_at %}<button type="button" class="cancelbtn" data-cancel="buys" data-id="{{ b.id }}">取消</button>{% endif %}
+        <button type="button" class="delbtn" data-del="buys" data-id="{{ b.id }}">削除</button>
+      </td>
     </tr>
   {% endfor %}
   </tbody>
@@ -65,13 +73,16 @@
     </select>
   </label>
   <label>メモ<input type="text" name="memo" style="width:160px"></label>
+  <label>口座区分
+    <select name="account_type"><option value="">指定なし</option><option>特定</option><option>NISA</option></select>
+  </label>
   <button type="submit">売却を追加</button>
 </form>
 <div class="tblwrap">
 <table>
   <thead><tr>
     <th>注文日</th><th>約定日</th><th>銘柄コード</th><th>銘柄名</th><th class="num">売り単価</th>
-    <th class="num">約定株数／注文株数</th><th class="num">損益</th><th>約定状態</th><th>メモ</th><th></th>
+    <th class="num">約定株数／注文株数</th><th class="num">損益</th><th>約定状態</th><th>メモ</th><th>口座区分</th><th>保有への反映</th><th></th>
   </tr></thead>
   <tbody>
   {% for s in sales %}
@@ -85,7 +96,12 @@
       <td class="num {{ 'pos' if (s.profit or 0) >= 0 else 'neg' }}">{{ s.profit|signed }}</td>
       <td><span class="tag">{{ s.status }}</span></td>
       <td class="memo">{{ s.memo or '' }}</td>
-      <td><button type="button" class="delbtn" data-del="sales" data-id="{{ s.id }}">削除</button></td>
+      <td>{{ s.account_type or '―' }}</td>
+      <td><span class="tag">{{ s.link_state }}</span></td>
+      <td>
+        {% if not s.cancelled_at %}<button type="button" class="cancelbtn" data-cancel="sales" data-id="{{ s.id }}">取消</button>{% endif %}
+        <button type="button" class="delbtn" data-del="sales" data-id="{{ s.id }}">削除</button>
+      </td>
     </tr>
   {% endfor %}
   </tbody>
@@ -104,7 +120,7 @@
       avg_price: numOrNull(f.get('avg_price')), shares: intOrNull(f.get('shares')),
       purchase_date: strOrNull(f.get('purchase_date')), policy: strOrNull(f.get('policy')),
       trigger_note: strOrNull(f.get('trigger_note')), note: strOrNull(f.get('note')),
-      status: f.get('status'),
+      status: f.get('status'), account_type: strOrNull(f.get('account_type')),
     });
     location.reload();
   });
@@ -120,10 +136,24 @@
       order_start_date: strOrNull(f.get('order_start_date')),
       executed_date: strOrNull(f.get('executed_date')),
       profit: numOrNull(f.get('profit')), status: f.get('status'),
-      memo: strOrNull(f.get('memo')),
+      memo: strOrNull(f.get('memo')), account_type: strOrNull(f.get('account_type')),
     });
     location.hash = 'sell';
     location.reload();
+  });
+  document.querySelectorAll('[data-cancel]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const label = btn.dataset.cancel === 'buys' ? '購入' : '売却';
+      const ok = await showDialog({
+        title: label + '履歴の取消',
+        message: 'この' + label + '履歴を取り消しますか？保有への反映も元に戻ります。',
+        okText: '取り消す', cancelText: 'キャンセル', danger: true,
+      });
+      if (!ok) return;
+      await apiJson('POST', '/api/v1/' + btn.dataset.cancel + '/' + btn.dataset.id + '/cancel');
+      if (btn.dataset.cancel === 'sales') location.hash = 'sell';
+      location.reload();
+    });
   });
   document.querySelectorAll('[data-del]').forEach(btn => {
     btn.addEventListener('click', async () => {

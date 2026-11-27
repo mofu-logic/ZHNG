@@ -52,6 +52,10 @@ from app.yahoo import (
 )
 from app.services import (
     BENEFIT_MEMO_FIELDS,
+    LinkageError,
+    buy_linkage_applies,
+    cancel_buy,
+    cancel_sale,
     candidates_at_target,
     candidate_exists,
     create_buy,
@@ -66,6 +70,7 @@ from app.services import (
     update_benefit,
     update_candidate,
     upsert_benefit_memo,
+    upsert_stock_info,
 )
 from app.settings import (
     DEFAULT_FETCH_START_TIME,
@@ -490,6 +495,24 @@ def history(request: Request):
         sales = conn.execute(
             "SELECT * FROM sales ORDER BY order_start_date DESC NULLS LAST, id DESC"
         ).fetchall()
+        linked = {
+            (e["source_type"], e["source_id"])
+            for e in conn.execute(
+                "SELECT source_type, source_id FROM holding_events"
+                " WHERE kind IN ('buy', 'sell')"
+            ).fetchall()
+        }
+    # Row state for the history screen: a cancelled trade stays
+    # visible as 取消済み, a trade with a linkage event is 反映済み,
+    # and anything else never touched holdings （対象外）.
+    for rows, source_type in ((buys, "buy_lot"), (sales, "sale")):
+        for r in rows:
+            if r["cancelled_at"] is not None:
+                r["link_state"] = "取消済み"
+            elif (source_type, r["id"]) in linked:
+                r["link_state"] = "反映済み"
+            else:
+                r["link_state"] = "対象外"
     return templates.TemplateResponse(request, "history.html", dict(buys=buys, sales=sales))
 
 
@@ -556,6 +579,7 @@ def _buy_out(r):
         avg_price=fnum(r["avg_price"]), shares=r["shares"],
         purchase_date=_date_out(r["purchase_date"]), policy=r["policy"],
         trigger_note=r["trigger_note"], note=r["note"], status=r["status"],
+        account_type=r["account_type"], cancelled_at=r["cancelled_at"],
     )
 
 
@@ -569,6 +593,7 @@ def _sale_out(r):
         order_start_date=_date_out(r["order_start_date"]),
         executed_date=_date_out(r["executed_date"]),
         profit=fnum(r["profit"]), status=r["status"], memo=r["memo"],
+        account_type=r["account_type"], cancelled_at=r["cancelled_at"],
     )
 
 
@@ -599,6 +624,7 @@ class BuyIn(BaseModel):
     trigger_note: str | None = None
     note: str | None = None
     status: str | None = None
+    account_type: str | None = None
 
 
 class SaleIn(BaseModel):
@@ -616,6 +642,7 @@ class SaleIn(BaseModel):
     profit: float | None = None
     status: str | None = None
     memo: str | None = None
+    account_type: str | None = None
 
 
 class BenefitIn(BaseModel):
@@ -653,6 +680,8 @@ class BuyOut(BaseModel):
     trigger_note: str | None
     note: str | None
     status: str
+    account_type: str | None
+    cancelled_at: datetime | None
 
 
 class SaleOut(BaseModel):
@@ -670,6 +699,8 @@ class SaleOut(BaseModel):
     profit: float | None
     status: str
     memo: str | None
+    account_type: str | None
+    cancelled_at: datetime | None
 
 
 class BenefitOut(BaseModel):
@@ -712,7 +743,35 @@ def api_buys_list():
 
 @app.post("/api/v1/buys", status_code=201, response_model=BuyOut, tags=["buys"])
 def api_buys_create(payload: BuyIn):
+    fetched = None
+    if payload.name is None and buy_linkage_applies(
+        account_type=payload.account_type, status=payload.status,
+        shares=payload.shares, avg_price=payload.avg_price,
+    ):
+        # A linked buy for a code the stock master does not know yet
+        # needs the master row first: fetch it from Yahoo, like
+        # purchase-candidate registration, and refuse the buy itself
+        # when the fetch fails (nothing is registered then). When a
+        # name is supplied, the existing behavior stands (the master
+        # row is created from the supplied name, without a market).
+        with db() as conn:
+            known = conn.execute(
+                "SELECT 1 FROM stocks WHERE code = %s", (payload.code,)
+            ).fetchone()
+        if known is None:
+            try:
+                market, name, price, fields = asyncio.run(
+                    fetch_one_quote(payload.code)
+                )
+            except RuntimeError as e:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"銘柄情報を取得できませんでした: {e}",
+                )
+            fetched = (name or payload.code, market)
     with db() as conn:
+        if fetched is not None:
+            upsert_stock_info(conn, payload.code, fetched[0], fetched[1])
         row = create_buy(conn, **payload.model_dump())
         conn.commit()
     emit_event("history.buy_created", id=row["id"], code=row["code"],
@@ -720,13 +779,38 @@ def api_buys_create(payload: BuyIn):
     return _buy_out(row)
 
 
+@app.post("/api/v1/buys/{lot_id}/cancel", response_model=BuyOut, tags=["buys"])
+def api_buys_cancel(lot_id: int):
+    with db() as conn:
+        outcome, row = cancel_buy(conn, lot_id)
+        if outcome == "ok":
+            conn.commit()
+    if outcome == "not_found":
+        raise HTTPException(status_code=404, detail="buy lot not found")
+    if outcome == "already":
+        raise HTTPException(status_code=409, detail="すでに取り消されています")
+    if outcome == "blocked":
+        raise HTTPException(
+            status_code=409,
+            detail="この履歴より後の保有変更があるため、取り消せません",
+        )
+    emit_event("history.buy_cancelled", id=lot_id, code=row["code"])
+    return _buy_out(row)
+
+
 @app.delete("/api/v1/buys/{lot_id}", status_code=204, tags=["buys"])
 def api_buys_delete(lot_id: int):
     with db() as conn:
-        deleted = delete_buy(conn, lot_id)
-        conn.commit()
-    if not deleted:
+        outcome = delete_buy(conn, lot_id)
+        if outcome == "deleted":
+            conn.commit()
+    if outcome == "not_found":
         raise HTTPException(status_code=404, detail="buy lot not found")
+    if outcome == "blocked":
+        raise HTTPException(
+            status_code=409,
+            detail="この履歴より後の保有変更があるため、削除できません",
+        )
     emit_event("history.buy_deleted", id=lot_id)
     return None
 
@@ -742,9 +826,14 @@ def api_sales_list():
 
 @app.post("/api/v1/sales", status_code=201, response_model=SaleOut, tags=["sales"])
 def api_sales_create(payload: SaleIn):
-    with db() as conn:
-        row = create_sale(conn, **payload.model_dump())
-        conn.commit()
+    try:
+        with db() as conn:
+            row = create_sale(conn, **payload.model_dump())
+            conn.commit()
+    except LinkageError as e:
+        # The executed shares exceed the holding for the named
+        # account: the sale itself is not registered either.
+        raise HTTPException(status_code=422, detail=str(e))
     attrs = dict(id=row["id"], code=row["code"], status=row["status"])
     if row["profit"] is not None:
         attrs["profit"] = float(row["profit"])
@@ -752,13 +841,38 @@ def api_sales_create(payload: SaleIn):
     return _sale_out(row)
 
 
+@app.post("/api/v1/sales/{sale_id}/cancel", response_model=SaleOut, tags=["sales"])
+def api_sales_cancel(sale_id: int):
+    with db() as conn:
+        outcome, row = cancel_sale(conn, sale_id)
+        if outcome == "ok":
+            conn.commit()
+    if outcome == "not_found":
+        raise HTTPException(status_code=404, detail="sale not found")
+    if outcome == "already":
+        raise HTTPException(status_code=409, detail="すでに取り消されています")
+    if outcome == "blocked":
+        raise HTTPException(
+            status_code=409,
+            detail="この履歴より後の保有変更があるため、取り消せません",
+        )
+    emit_event("history.sell_cancelled", id=sale_id, code=row["code"])
+    return _sale_out(row)
+
+
 @app.delete("/api/v1/sales/{sale_id}", status_code=204, tags=["sales"])
 def api_sales_delete(sale_id: int):
     with db() as conn:
-        deleted = delete_sale(conn, sale_id)
-        conn.commit()
-    if not deleted:
+        outcome = delete_sale(conn, sale_id)
+        if outcome == "deleted":
+            conn.commit()
+    if outcome == "not_found":
         raise HTTPException(status_code=404, detail="sale not found")
+    if outcome == "blocked":
+        raise HTTPException(
+            status_code=409,
+            detail="この履歴より後の保有変更があるため、削除できません",
+        )
     emit_event("history.sell_deleted", id=sale_id)
     return None
 
