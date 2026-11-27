@@ -3,7 +3,7 @@
    reference them, so DESIGN.md stays the single source of truth
    for colours, radii and motion values. */
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif; color: #1c2330; background: #f6f7f9; font-size: 16px; }
+  body { margin: 0; font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif; color: var(--color-ink); background: var(--color-bg); font-size: 16px; }
   :root {
     --color-ink: #1c2330;
     --color-ink-sub: #5b6575;
