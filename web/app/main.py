@@ -29,10 +29,10 @@ from fastapi import (
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from app import fetch_service
-from app.config import DATABASE_URL, JST
+from app.config import ACCOUNT_TYPES, DATABASE_URL, JST
 from app.db import SCHEMA, db, initialize_database
 from app.formatting import (
     fnum,
@@ -343,7 +343,7 @@ def dashboard(request: Request):
         request,
         "dashboard.html",
         dict(items=items, kpi=kpi, price_at=price_at, policies=policies, accounts=accounts,
-             fetch_start_time=fetch_start_time),
+             fetch_start_time=fetch_start_time, account_types=ACCOUNT_TYPES),
     )
 
 
@@ -665,6 +665,19 @@ def _holding_event_out(r):
     )
 
 
+def _validate_account_type(v):
+    """口座区分は許可リスト（ACCOUNT_TYPES）の値だけを受け付ける。
+
+    None（口座区分なし＝保有に連動しない）はそのまま通す。
+    """
+    if v is not None and v not in ACCOUNT_TYPES:
+        raise ValueError(
+            "口座区分は" + "・".join(ACCOUNT_TYPES)
+            + "のいずれかを指定してください"
+        )
+    return v
+
+
 class BuyIn(BaseModel):
     code: Annotated[str, StringConstraints(strip_whitespace=True,
                                            min_length=1)]
@@ -677,6 +690,11 @@ class BuyIn(BaseModel):
     note: str | None = None
     status: str | None = None
     account_type: str | None = None
+
+    @field_validator("account_type")
+    @classmethod
+    def _account_type_allowed(cls, v):
+        return _validate_account_type(v)
 
 
 class SaleIn(BaseModel):
@@ -695,6 +713,11 @@ class SaleIn(BaseModel):
     status: str | None = None
     memo: str | None = None
     account_type: str | None = None
+
+    @field_validator("account_type")
+    @classmethod
+    def _account_type_allowed(cls, v):
+        return _validate_account_type(v)
 
 
 class BenefitIn(BaseModel):
@@ -981,12 +1004,17 @@ class HoldingIn(BaseModel):
     ordered_shares: int = Field(default=0, ge=0)
     custody_type: str | None = None
 
+    @field_validator("account_type")
+    @classmethod
+    def _account_type_allowed(cls, v):
+        return _validate_account_type(v)
+
 
 class HoldingOut(BaseModel):
     id: int
     code: str
     name: str | None
-    account_type: str | None
+    account_type: str
     custody_type: str | None
     avg_price: float | None
     shares: int
@@ -997,7 +1025,7 @@ class HoldingOut(BaseModel):
 class HoldingEventOut(BaseModel):
     id: int
     code: str
-    account_type: str | None
+    account_type: str
     kind: str
     source_type: str
     source_id: int | None

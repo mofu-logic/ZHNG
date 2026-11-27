@@ -97,8 +97,7 @@
       <label>銘柄コード <input type="text" name="code" required></label>
       <label>口座区分
         <select name="account_type">
-          <option value="特定">特定</option>
-          <option value="NISA">NISA</option>
+          {% for a in account_types %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
         </select>
       </label>
       <label>平均取得単価 <input type="number" name="avg_price" step="any" min="0" required></label>
