@@ -797,43 +797,66 @@ def api_buys_list():
     return [_buy_out(r) for r in rows]
 
 
+def _fetch_stock_info(code):
+    """Fetch (name, market) for one code from Yahoo, the same way
+    purchase-candidate registration does. A code that cannot be
+    fetched at all is a 502; the caller registers nothing then."""
+    try:
+        market, name, price, fields = asyncio.run(fetch_one_quote(code))
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"銘柄情報を取得できませんでした: {e}",
+        )
+    return (name or code), market
+
+
+def _resolve_trade_name(code, supplied_name, *, fetch_unknown=False):
+    """Resolve the name a buy or sale is recorded with.
+
+    Returns (name, fetched): fetched is the (name, market) pair the
+    caller must register in the stock master, or None when nothing
+    was fetched. An explicitly supplied name wins as-is. Without
+    one, the stock master's name fills in; a code the master does
+    not know (or knows without a name) is fetched from Yahoo, and a
+    fetch failure aborts the registration with a 502 so nothing is
+    stored. fetch_unknown additionally fetches an unknown code when
+    a name was supplied: a linked buy needs the master row (market
+    included) either way, because a row created from the supplied
+    name alone would have no market and fail every nightly fetch.
+    """
+    with db() as conn:
+        master = conn.execute(
+            "SELECT name FROM stocks WHERE code = %s", (code,)
+        ).fetchone()
+    if supplied_name is not None:
+        if fetch_unknown and master is None:
+            return supplied_name, _fetch_stock_info(code)
+        return supplied_name, None
+    if master is not None and master["name"]:
+        return master["name"], None
+    fetched = _fetch_stock_info(code)
+    return fetched[0], fetched
+
+
 @app.post("/api/v1/buys", status_code=201, response_model=BuyOut, tags=["buys"])
 def api_buys_create(payload: BuyIn):
-    fetched = None
-    if buy_linkage_applies(
-        account_type=payload.account_type, status=payload.status,
-        shares=payload.shares, avg_price=payload.avg_price,
-    ):
-        # A linked buy for a code the stock master does not know yet
-        # needs the master row first: fetch it from Yahoo, like
-        # purchase-candidate registration, and refuse the buy itself
-        # when the fetch fails (nothing is registered then). This
-        # holds whether or not a name was supplied: a master row
-        # created from the supplied name alone would have no market
-        # and fail every nightly fetch. The supplied name is still
-        # what buy_lots records; the fetched name fills it in only
-        # when none was supplied.
-        with db() as conn:
-            known = conn.execute(
-                "SELECT 1 FROM stocks WHERE code = %s", (payload.code,)
-            ).fetchone()
-        if known is None:
-            try:
-                market, name, price, fields = asyncio.run(
-                    fetch_one_quote(payload.code)
-                )
-            except RuntimeError as e:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"銘柄情報を取得できませんでした: {e}",
-                )
-            fetched = (name or payload.code, market)
+    # The server fills the name in when none was supplied (stock
+    # master, or Yahoo for an unknown code); a linked buy fetches an
+    # unknown code even when a name was supplied, so the master row
+    # exists with its market. See _resolve_trade_name.
+    name, fetched = _resolve_trade_name(
+        payload.code, payload.name,
+        fetch_unknown=buy_linkage_applies(
+            account_type=payload.account_type, status=payload.status,
+            shares=payload.shares, avg_price=payload.avg_price,
+        ),
+    )
     with db() as conn:
         if fetched is not None:
             upsert_stock_info(conn, payload.code, fetched[0], fetched[1])
         kwargs = payload.model_dump()
-        if fetched is not None and kwargs["name"] is None:
-            kwargs["name"] = fetched[0]
+        kwargs["name"] = name
         row = create_buy(conn, **kwargs)
         conn.commit()
     emit_event("history.buy_created", id=row["id"], code=row["code"],
@@ -888,9 +911,17 @@ def api_sales_list():
 
 @app.post("/api/v1/sales", status_code=201, response_model=SaleOut, tags=["sales"])
 def api_sales_create(payload: SaleIn):
+    # The name is filled in exactly as for buys (see
+    # _resolve_trade_name); the buy price and the profit are derived
+    # in create_sale when they were not supplied.
+    name, fetched = _resolve_trade_name(payload.code, payload.name)
     try:
         with db() as conn:
-            row = create_sale(conn, **payload.model_dump())
+            if fetched is not None:
+                upsert_stock_info(conn, payload.code, fetched[0], fetched[1])
+            kwargs = payload.model_dump()
+            kwargs["name"] = name
+            row = create_sale(conn, **kwargs)
             conn.commit()
     except LinkageError as e:
         # The executed shares exceed the holding for the named
