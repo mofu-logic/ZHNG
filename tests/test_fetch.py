@@ -430,3 +430,170 @@ def test_fetch_all_unexpected_loop_error_still_finishes_run(
     assert run["finished_at"] is not None
     assert run["ok_count"] == 1  # 8888 stored before the pacing sleep
     assert run["ng_count"] == 0
+
+
+# --- Plausibility guard (2026-11-27) -----------------------------------
+# The parser once stored the volume (or the previous close) as the
+# close for prices with a fractional part. Independently of the parse
+# fix, fetch_all must refuse to store an implausible quote and count
+# the code as failed instead. The pages below are built so that only
+# one guard condition trips in each test.
+
+from test_parse import JP_PAGE_DECIMAL
+
+
+def _quote_page(price, prev_close, open_price, day_high, day_low, volume):
+    """A quote page in the real structure (_CommonPriceBoard__price_
+    board plus a data list). Values are the literal page texts;
+    None renders as "---" (the field is then absent from the parse)."""
+
+    def item(name, value):
+        body = (
+            f'<span class="_StyledNumber__value_2">{value}</span>'
+            if value is not None
+            else "---"
+        )
+        return (
+            '<dt class="_DataListItem__term_a">'
+            f'<span class="_DataListItem__name_b">{name}</span></dt>'
+            f"<dd>{body}</dd>"
+        )
+
+    return (
+        "<html><body>"
+        '<div class="_PriceBoardMenu__menu_a">メニュー</div>'
+        '<div class="_CommonPriceBoard__price_b">'
+        f'<span class="_StyledNumber__value_1">{price}</span></div>'
+        "<dl>"
+        + item("前日終値", prev_close)
+        + item("始値", open_price)
+        + item("高値", day_high)
+        + item("安値", day_low)
+        + item("出来高", volume)
+        + "</dl></body></html>"
+    )
+
+
+class _PageMapClient:
+    """Serves a fixed page per stock code (INDEX_PAGE for the Nikkei)."""
+
+    def __init__(self, pages, headers=None, timeout=None):
+        self.pages = pages
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url):
+        if "998407" in url:
+            return FakeResponse(200, INDEX_PAGE)
+        for code, page in self.pages.items():
+            if f"/{code}." in url:
+                return FakeResponse(200, page)
+        return FakeResponse(200, JP_PAGE)
+
+
+def _install_pages(monkeypatch, pages):
+    monkeypatch.setattr(
+        main.httpx, "AsyncClient", lambda **kw: _PageMapClient(pages, **kw)
+    )
+
+
+def _assert_code_rejected(db):
+    run = db.execute("SELECT * FROM fetch_runs").fetchone()
+    assert run["finished_at"] is not None
+    assert run["ok_count"] == 1
+    assert run["ng_count"] == 1
+    prices = db.execute(
+        "SELECT code FROM price_points ORDER BY code"
+    ).fetchall()
+    assert [p["code"] for p in prices] == ["9999"]
+    snaps = db.execute(
+        "SELECT code FROM daily_snapshots WHERE snap_date = %s ORDER BY code",
+        (_snap_date_today(),),
+    ).fetchall()
+    assert [s["code"] for s in snaps] == ["9999", "N225"]
+
+
+def test_fetch_all_rejects_price_equal_to_volume(db, fake_fetch, monkeypatch):
+    _seed_two_stocks(db)
+    _install_pages(
+        monkeypatch,
+        {
+            "8888": _quote_page(
+                "123,456", "120,000", "121,000", "125,000", "119,000", "123,456"
+            )
+        },
+    )
+    asyncio.run(main.fetch_all("batch"))
+    _assert_code_rejected(db)
+
+
+def test_fetch_all_rejects_price_outside_day_range(
+    db, fake_fetch, monkeypatch
+):
+    # The stored 3941 case: the "close" (1,477) sat below the day low
+    # (1,480) because it was really the previous close.
+    _seed_two_stocks(db)
+    _install_pages(
+        monkeypatch,
+        {"8888": _quote_page("1,477", "1,477", "1,500", "1,513", "1,480", "957,600")},
+    )
+    asyncio.run(main.fetch_all("batch"))
+    _assert_code_rejected(db)
+
+
+def test_fetch_all_rejects_quote_without_ohlc_and_volume(
+    db, fake_fetch, monkeypatch
+):
+    # No trades today: a price-like number is on the page but open /
+    # high / low / volume are all "---". Nothing may be stored.
+    _seed_two_stocks(db)
+    _install_pages(
+        monkeypatch,
+        {"8888": _quote_page("3,029", "3,029", None, None, None, None)},
+    )
+    asyncio.run(main.fetch_all("batch"))
+    _assert_code_rejected(db)
+
+
+def test_fetch_all_rejects_implausible_daily_move(
+    db, fake_fetch, monkeypatch
+):
+    # +102% against the previous close is beyond any daily price
+    # limit; such a jump means the parsed "price" is not the price.
+    _seed_two_stocks(db)
+    _install_pages(
+        monkeypatch,
+        {"8888": _quote_page("2,000", "990", "1,995", "2,010", "1,985", "123,456")},
+    )
+    asyncio.run(main.fetch_all("batch"))
+    _assert_code_rejected(db)
+
+
+def test_fetch_all_stores_decimal_close_price(db, fake_fetch, monkeypatch):
+    # The guard must not misfire on a genuine decimal close: 830.4 is
+    # stored as 830.4 (not as the volume, not rejected).
+    _seed_two_stocks(db)
+    _install_pages(monkeypatch, {"8888": JP_PAGE_DECIMAL})
+    asyncio.run(main.fetch_all("batch"))
+
+    run = db.execute("SELECT * FROM fetch_runs").fetchone()
+    assert run["ok_count"] == 2
+    assert run["ng_count"] == 0
+
+    price = db.execute(
+        "SELECT price FROM price_points WHERE code = '8888'"
+    ).fetchone()
+    assert float(price["price"]) == 830.4
+
+    snap = db.execute(
+        "SELECT * FROM daily_snapshots"
+        " WHERE code = '8888' AND snap_date = %s",
+        (_snap_date_today(),),
+    ).fetchone()
+    assert float(snap["close_price"]) == 830.4
+    assert float(snap["prev_close"]) == 825.3
+    assert snap["volume"] == 1234500

@@ -50,9 +50,39 @@ def suffix_for_market(market):
 
 def parse_jp_page(html):
     """Extract the current price and the labeled data-list values from a
-    Yahoo! Finance Japan quote page (finance.yahoo.co.jp/quote/{code}.T|.N|.S|.F)."""
-    m = re.search(r"_PriceBoard.*?_StyledNumber__value_[^\"]*\">([\d,]+)<", html, re.S)
-    price = float(m.group(1).replace(",", "")) if m else None
+    Yahoo! Finance Japan quote page (finance.yahoo.co.jp/quote/{code}.T|.N|.S|.F).
+
+    The price is read from the _CommonPriceBoard__price_ board only.
+    The old regex scanned from the first "_PriceBoard" substring for
+    the first integer styled number: a close with a fractional part
+    (e.g. 830.4) never matched at the price element, so the scan
+    walked on and returned the volume, the previous close or an
+    integer-part-only element as the price (2026-11-27 incident).
+    When the common board exists it is authoritative: a board
+    showing "---" (no trades today) means there is no price, and the
+    numbers behind the board (the data list) must not be picked up
+    instead. Pages without the common board (the old layout) fall
+    back to the first styled number after _PriceBoard, decimals
+    included.
+    """
+    price = None
+    board_at = html.find("_CommonPriceBoard__price_")
+    if board_at >= 0:
+        board = html[board_at:]
+        list_at = board.find("_DataListItem__term_")
+        if list_at >= 0:
+            board = board[:list_at]
+        vm = re.search(r"_StyledNumber__value_[^\"]*\">([\d,\.]+)<", board)
+        if vm:
+            price = float(vm.group(1).replace(",", ""))
+    else:
+        m = re.search(
+            r"_PriceBoard.*?_StyledNumber__value_[^\"]*\">([\d,\.]+)<",
+            html,
+            re.S,
+        )
+        if m:
+            price = float(m.group(1).replace(",", ""))
     return price, _page_fields(html)
 
 

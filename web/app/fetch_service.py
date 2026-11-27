@@ -115,6 +115,41 @@ def _store_quote(conn, code, price, fields, snap_date, run_id=None,
         )
 
 
+def _quote_rejection(price, fields):
+    """保存前ガード：パース結果が終値としてあり得ない場合に、その
+    理由を返す（妥当なら None）。2026-11-27 の誤取得では、小数部の
+    ある終値の代わりに出来高や前日終値がそのまま保存された。
+    パース修正とは独立の最終防衛線として、あり得ない値は保存せず
+    その銘柄を失敗として扱うため、fetch_all が保存前に呼ぶ。"""
+    volume = fields.get("出来高")
+    open_price = fields.get("始値")
+    day_high = fields.get("高値")
+    day_low = fields.get("安値")
+    prev_close = fields.get("前日終値")
+    if volume is not None and price == volume:
+        return "price equals volume"
+    if (
+        open_price is None
+        and day_high is None
+        and day_low is None
+        and volume is None
+    ):
+        return "open/high/low/volume all missing"
+    if (
+        day_high is not None
+        and day_low is not None
+        and not day_low <= price <= day_high
+    ):
+        return "price outside the day range"
+    if (
+        prev_close is not None
+        and prev_close > 0
+        and abs(price / prev_close - 1) > 0.30
+    ):
+        return "move vs previous close exceeds 30%"
+    return None
+
+
 async def fetch_all(note="manual", *, db=_default_db, lock):
     """全銘柄を取得する。lock は必須: 手動取得と夜間バッチが同じ
     ロックを共有するため、呼び出し側 (main.py の _fetch_lock) を
@@ -178,6 +213,11 @@ async def fetch_all(note="manual", *, db=_default_db, lock):
                         price, fields = parse_jp_page(r.text)
                         if price is None or price <= 0:
                             raise RuntimeError("price not found in page")
+                        rejection = _quote_rejection(price, fields)
+                        if rejection is not None:
+                            raise RuntimeError(
+                                f"implausible quote rejected: {rejection}"
+                            )
                         industry = None
                         if code in industry_due:
                             # A failed profile fetch must not fail the quote.
