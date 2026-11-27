@@ -449,6 +449,9 @@ def test_dashboard_holdings_controls(client, db):
     assert "削除" in page
     assert "/api/v1/holdings" in page
     assert "/events" in page
+    # The history modal puts the .date (nowrap) class on its datetime
+    # cell so the timestamp never wraps onto two lines.
+    assert "td.className = 'date'" in page
 
 
 # ------------------------------------------------- mixed manual / linkage
