@@ -442,9 +442,13 @@ def test_dashboard_holdings_controls(client, db):
     page = r.text
     # Add button and its modal fields.
     assert "追加" in page
-    for field in ("code", "account_type", "avg_price", "shares",
-                  "lent_shares", "ordered_shares"):
+    for field in ("code", "account_type", "avg_price", "shares"):
         assert f'name="{field}"' in page, field
+    # Lent shares, ordered shares and custody type are not inputs of
+    # the add form (the owner does not use them for now). They remain
+    # available through the API and the CSV import mapping.
+    for field in ("lent_shares", "ordered_shares", "custody_type"):
+        assert f'name="{field}"' not in page, field
     # Per-row delete and history actions, wired to the holdings API.
     assert "削除" in page
     assert "/api/v1/holdings" in page
