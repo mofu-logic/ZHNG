@@ -32,7 +32,7 @@ from app.yahoo import (
 logger = logging.getLogger("stock-app")
 
 
-def _store_snapshot(conn, code, snap_date, price, fields):
+def _store_snapshot(conn, code, price, fields, snap_date):
     """Upsert one row of daily_snapshots from parsed page fields.
 
     Missing fields are stored (and, on a same-day refetch, overwritten)
@@ -96,7 +96,7 @@ def _store_quote(conn, code, price, fields, snap_date, run_id=None,
             int(volume) if volume is not None else None,
         ),
     )
-    _store_snapshot(conn, code, snap_date, price, fields)
+    _store_snapshot(conn, code, price, fields, snap_date)
     if div is not None and update_dividend:
         old_row = conn.execute(
             "SELECT dividend_forecast FROM dividend_benefits"
@@ -306,12 +306,12 @@ async def fetch_all(note="manual", *, db=_default_db, lock):
                         _store_snapshot(
                             conn,
                             "N225",
-                            snap_date,
                             nprice,
                             {
                                 key: nfields.get(key)
                                 for key in ("前日終値", "始値", "高値", "安値")
                             },
+                            snap_date,
                         )
                         conn.commit()
             except Exception:
