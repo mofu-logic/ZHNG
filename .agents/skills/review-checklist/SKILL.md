@@ -1,6 +1,6 @@
 ---
 name: review-checklist
-description: PR のレビューで確認する観点の一覧。すべての PR で確認する観点（一般：設定値の連動、デッドコード）と、画面・CSS・JS に触れる PR で確認する観点（モダンWeb：ネイティブ dialog、popover と anchor positioning、View Transitions、prefers-reduced-motion、カスケードレイヤー、color-mix と Forced Colors、:user-invalid、:focus-visible）。PR のレビューを行うときに使う。
+description: PR のレビューで確認する観点の一覧。すべての PR で確認する観点（一般：設定値の連動、デッドコード、DBカラムの棚卸し）と、画面・CSS・JS に触れる PR で確認する観点（モダンWeb：ネイティブ dialog、popover と anchor positioning、View Transitions、prefers-reduced-motion、カスケードレイヤー、color-mix と Forced Colors、:user-invalid、:focus-visible）。PR のレビューを行うときに使う。
 ---
 
 # レビュー観点
@@ -24,6 +24,13 @@ PR でも、該当する項目は確認すること。
   行わず、リリース・デプロイ前の区切りや大きなリファクタリング
   の後にまとめて実施する（プロパティテストの heavy プロファイル
   を通すタイミングと揃える）。
+- **DBカラムの棚卸し：** PR ごとの確認は行わず、デッドコードの
+  全体洗い出しと同じタイミング（リリース・デプロイ前の区切りや
+  大きなリファクタリングの後）でまとめて実施する。全テーブルの
+  全カラムについて、コードでの読み書きと本番データの実態
+  （NULL のみ・単一値のみ等）を突き合わせる。読み出しが一切ない
+  カラムは削除候補としてユーザーに提示し、削除の判断は
+  ユーザーが行う。
 
 ## 観点（モダンWeb）
 
