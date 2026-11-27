@@ -381,111 +381,124 @@ async def fetch_all(note="manual"):
         emit_event("fetch.started", run_id=run_id, kind=note, total=len(targets))
         ok = ng = 0
         first_error = None
-        async with httpx.AsyncClient(headers={"User-Agent": UA}, timeout=25) as client:
-            for t in targets:
-                code = t["code"]
-                # All quotes come from the Yahoo! Finance Japan quote pages
-                # (suffix per exchange: .T/.N/.S/.F). The pages also carry
-                # the company-forecast dividend, which auto-updates the
-                # master.
-                suffix = suffix_for_market(t["market"])
-                try:
-                    r = await client.get(
-                        f"https://finance.yahoo.co.jp/quote/{code}.{suffix}"
-                    )
+        try:
+            async with httpx.AsyncClient(headers={"User-Agent": UA}, timeout=25) as client:
+                for t in targets:
+                    code = t["code"]
+                    # All quotes come from the Yahoo! Finance Japan quote pages
+                    # (suffix per exchange: .T/.N/.S/.F). The pages also carry
+                    # the company-forecast dividend, which auto-updates the
+                    # master.
+                    suffix = suffix_for_market(t["market"])
+                    try:
+                        r = await client.get(
+                            f"https://finance.yahoo.co.jp/quote/{code}.{suffix}"
+                        )
+                        if r.status_code != 200:
+                            raise RuntimeError(f"HTTP {r.status_code}")
+                        price, fields = parse_jp_page(r.text)
+                        if price is None or price <= 0:
+                            raise RuntimeError("price not found in page")
+                        industry = None
+                        if code in industry_due:
+                            # A failed profile fetch must not fail the quote.
+                            try:
+                                pr = await client.get(
+                                    f"https://finance.yahoo.co.jp/quote/{code}.{suffix}/profile"
+                                )
+                                if pr.status_code == 200:
+                                    industry = parse_profile_page(pr.text)
+                            except Exception:
+                                industry = None
+                            await asyncio.sleep(random.uniform(3, 8))
+                        # The 01:00 batch reads the previous trading day's close;
+                        # JST-9h maps the fetch moment to that trading day.
+                        snap_date = (datetime.now(JST) - timedelta(hours=9)).date()
+                        with db() as conn:
+                            _store_quote(
+                                conn, code, price, fields, snap_date,
+                                run_id=run_id,
+                                update_dividend=code in holding_codes,
+                            )
+                            if industry:
+                                conn.execute(
+                                    "UPDATE stocks SET industry = %s,"
+                                    " industry_fetched_on = CURRENT_DATE"
+                                    " WHERE code = %s",
+                                    (industry, code),
+                                )
+                            conn.commit()
+                        ok += 1
+                    except Exception as e:
+                        ng += 1
+                        emit_event(
+                            "fetch.code_failed",
+                            severity="WARNING",
+                            run_id=run_id,
+                            code=code,
+                            error=f"{type(e).__name__}: {e}"[:200],
+                        )
+                        if first_error is None:
+                            first_error = f"{type(e).__name__}: {e}"[:120]
+                    # A progress-update failure is not a per-code failure:
+                    # log it and keep going, so a transient DB hiccup
+                    # cannot stall the whole batch (same class of bug as
+                    # the _finish_run one fixed for run 7).
+                    try:
+                        with db() as conn:
+                            conn.execute(
+                                "UPDATE fetch_runs SET done_count = done_count + 1 WHERE id = %s",
+                                (run_id,),
+                            )
+                            conn.commit()
+                    except Exception:
+                        logger.exception(
+                            "fetch run %s: progress update failed for %s",
+                            run_id,
+                            code,
+                        )
+                    # Gentle pacing: Yahoo rate-limits bursts from this network.
+                    # 25-45s with random jitter per request (verified 2026-11-25).
+                    await asyncio.sleep(random.uniform(25, 45))
+            # Nikkei 225 close, from the same source (Yahoo! Finance Japan,
+            # quote/998407.O). Stored as a daily snapshot only (code N225);
+            # a failure here must not affect the stock counts above.
+            try:
+                async with httpx.AsyncClient(headers={"User-Agent": UA}, timeout=25) as ic:
+                    r = await ic.get("https://finance.yahoo.co.jp/quote/998407.O")
                     if r.status_code != 200:
                         raise RuntimeError(f"HTTP {r.status_code}")
-                    price, fields = parse_jp_page(r.text)
-                    if price is None or price <= 0:
-                        raise RuntimeError("price not found in page")
-                    industry = None
-                    if code in industry_due:
-                        # A failed profile fetch must not fail the quote.
-                        try:
-                            pr = await client.get(
-                                f"https://finance.yahoo.co.jp/quote/{code}.{suffix}/profile"
-                            )
-                            if pr.status_code == 200:
-                                industry = parse_profile_page(pr.text)
-                        except Exception:
-                            industry = None
-                        await asyncio.sleep(random.uniform(3, 8))
-                    # The 01:00 batch reads the previous trading day's close;
-                    # JST-9h maps the fetch moment to that trading day.
+                    nprice, nfields = parse_index_page(r.text)
+                    if nprice is None or nprice <= 0:
+                        raise RuntimeError("index price not found in page")
                     snap_date = (datetime.now(JST) - timedelta(hours=9)).date()
                     with db() as conn:
-                        _store_quote(
-                            conn, code, price, fields, snap_date,
-                            run_id=run_id,
-                            update_dividend=code in holding_codes,
+                        conn.execute(
+                            "INSERT INTO daily_snapshots(code, snap_date, close_price,"
+                            " prev_close, open_price, day_high, day_low, volume,"
+                            " market_cap_m, dividend_forecast, dividend_yield, per, pbr,"
+                            " captured_at, source)"
+                            " VALUES ('N225',%s,%s,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL,NULL,"
+                            " now(), 'yahoo-jp')"
+                            " ON CONFLICT (code, snap_date) DO UPDATE SET"
+                            " close_price=EXCLUDED.close_price,"
+                            " prev_close=EXCLUDED.prev_close,"
+                            " open_price=EXCLUDED.open_price, day_high=EXCLUDED.day_high,"
+                            " day_low=EXCLUDED.day_low, captured_at=now()",
+                            (
+                                snap_date,
+                                nprice,
+                                nfields.get("前日終値"),
+                                nfields.get("始値"),
+                                nfields.get("高値"),
+                                nfields.get("安値"),
+                            ),
                         )
-                        if industry:
-                            conn.execute(
-                                "UPDATE stocks SET industry = %s,"
-                                " industry_fetched_on = CURRENT_DATE"
-                                " WHERE code = %s",
-                                (industry, code),
-                            )
                         conn.commit()
-                    ok += 1
-                except Exception as e:
-                    ng += 1
-                    emit_event(
-                        "fetch.code_failed",
-                        severity="WARNING",
-                        run_id=run_id,
-                        code=code,
-                        error=f"{type(e).__name__}: {e}"[:200],
-                    )
-                    if first_error is None:
-                        first_error = f"{type(e).__name__}: {e}"[:120]
-                with db() as conn:
-                    conn.execute(
-                        "UPDATE fetch_runs SET done_count = done_count + 1 WHERE id = %s",
-                        (run_id,),
-                    )
-                    conn.commit()
-                # Gentle pacing: Yahoo rate-limits bursts from this network.
-                # 25-45s with random jitter per request (verified 2026-11-25).
-                await asyncio.sleep(random.uniform(25, 45))
-        # Nikkei 225 close, from the same source (Yahoo! Finance Japan,
-        # quote/998407.O). Stored as a daily snapshot only (code N225);
-        # a failure here must not affect the stock counts above.
-        try:
-            async with httpx.AsyncClient(headers={"User-Agent": UA}, timeout=25) as ic:
-                r = await ic.get("https://finance.yahoo.co.jp/quote/998407.O")
-                if r.status_code != 200:
-                    raise RuntimeError(f"HTTP {r.status_code}")
-                nprice, nfields = parse_index_page(r.text)
-                if nprice is None or nprice <= 0:
-                    raise RuntimeError("index price not found in page")
-                snap_date = (datetime.now(JST) - timedelta(hours=9)).date()
-                with db() as conn:
-                    conn.execute(
-                        "INSERT INTO daily_snapshots(code, snap_date, close_price,"
-                        " prev_close, open_price, day_high, day_low, volume,"
-                        " market_cap_m, dividend_forecast, dividend_yield, per, pbr,"
-                        " captured_at, source)"
-                        " VALUES ('N225',%s,%s,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL,NULL,"
-                        " now(), 'yahoo-jp')"
-                        " ON CONFLICT (code, snap_date) DO UPDATE SET"
-                        " close_price=EXCLUDED.close_price,"
-                        " prev_close=EXCLUDED.prev_close,"
-                        " open_price=EXCLUDED.open_price, day_high=EXCLUDED.day_high,"
-                        " day_low=EXCLUDED.day_low, captured_at=now()",
-                        (
-                            snap_date,
-                            nprice,
-                            nfields.get("前日終値"),
-                            nfields.get("始値"),
-                            nfields.get("高値"),
-                            nfields.get("安値"),
-                        ),
-                    )
-                    conn.commit()
-        except Exception:
-            logger.exception("Nikkei 225 fetch failed (run %s)", run_id)
-        await _finish_run(run_id, ok, ng, first_error)
+            except Exception:
+                logger.exception("Nikkei 225 fetch failed (run %s)", run_id)
+        finally:
+            await _finish_run(run_id, ok, ng, first_error)
         emit_event("fetch.finished", run_id=run_id, kind=note, ok=ok, ng=ng)
 
 
