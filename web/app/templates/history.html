@@ -13,8 +13,8 @@
 <div class="tblwrap">
 <table id="buys">
   <thead><tr>
-    <th class="sortable" data-type="str">買付日</th><th class="sortable" data-type="str">銘柄コード</th><th class="sortable" data-type="str">銘柄名</th><th class="sortable num" data-type="num">取得単価</th><th class="sortable num" data-type="num">株数</th>
-    <th class="sortable" data-type="str">購入方針</th><th class="sortable" data-type="str">購入契機</th><th class="sortable" data-type="str">メモ</th><th class="sortable" data-type="str">約定状態</th><th class="sortable" data-type="str">口座区分</th><th class="sortable" data-type="str">保有への反映</th><th></th>
+    <th class="sortable" data-type="str">買付日</th><th class="sortable" data-type="str">銘柄コード</th><th class="sortable" data-type="str">銘柄名</th><th class="sortable" data-type="str">口座</th><th class="sortable num" data-type="num">取得単価</th><th class="sortable num" data-type="num">株数</th>
+    <th class="sortable" data-type="str">購入方針</th><th class="sortable" data-type="str">購入契機</th><th class="sortable" data-type="str">メモ</th><th class="sortable" data-type="str">約定状態</th><th></th>
   </tr></thead>
   <tbody>
   {% for b in buys %}
@@ -22,14 +22,13 @@
       <td class="date">{{ b.purchase_date or '―' }}</td>
       <td class="code">{{ b.code or '' }}</td>
       <td><span class="name">{{ b.name or '' }}</span></td>
+      <td>{{ b.account_type or '' }}</td>
       <td class="num" data-v="{{ b.avg_price or 0 }}">{{ b.avg_price|price }}</td>
       <td class="num" data-v="{{ b.shares or 0 }}">{{ b.shares or '' }}</td>
       <td>{{ b.policy or '' }}</td>
       <td>{{ b.trigger_note or '' }}</td>
       <td>{{ memo_tip(b.note) }}</td>
       <td class="nowrap"><span class="tag">{{ b.status }}</span></td>
-      <td>{{ b.account_type or '' }}</td>
-      <td><span class="tag">{{ b.link_state }}</span></td>
       <td>
         {% if not b.cancelled_at %}<button type="button" class="cancelbtn" data-cancel="buys" data-id="{{ b.id }}">取消</button>{% endif %}
         <button type="button" class="delbtn" data-del="buys" data-id="{{ b.id }}">削除</button>
@@ -48,8 +47,8 @@
 <div class="tblwrap">
 <table id="sales">
   <thead><tr>
-    <th class="sortable" data-type="str">注文日</th><th class="sortable" data-type="str">約定日</th><th class="sortable" data-type="str">銘柄コード</th><th class="sortable" data-type="str">銘柄名</th><th class="sortable num" data-type="num">売り単価</th>
-    <th class="sortable num" data-type="num">約定株数／注文株数</th><th class="sortable num" data-type="num">損益</th><th class="sortable" data-type="str">約定状態</th><th class="sortable" data-type="str">メモ</th><th class="sortable" data-type="str">口座区分</th><th class="sortable" data-type="str">保有への反映</th><th></th>
+    <th class="sortable" data-type="str">注文日</th><th class="sortable" data-type="str">約定日</th><th class="sortable" data-type="str">銘柄コード</th><th class="sortable" data-type="str">銘柄名</th><th class="sortable" data-type="str">口座</th><th class="sortable num" data-type="num">売り単価</th>
+    <th class="sortable num" data-type="num">約定株数／注文株数</th><th class="sortable num" data-type="num">損益</th><th class="sortable" data-type="str">約定状態</th><th class="sortable" data-type="str">メモ</th><th></th>
   </tr></thead>
   <tbody>
   {% for s in sales %}
@@ -58,13 +57,12 @@
       <td class="date">{{ s.executed_date or '―' }}</td>
       <td class="code">{{ s.code or '' }}</td>
       <td><span class="name">{{ s.name or '' }}</span></td>
+      <td>{{ s.account_type or '' }}</td>
       <td class="num" data-v="{{ s.sell_price or 0 }}">{{ s.sell_price|price }}</td>
       <td class="num" data-v="{{ s.executed_shares or 0 }}">{{ s.executed_shares or 0 }} / {{ s.sell_shares or '' }}</td>
       <td class="num {{ 'pos' if (s.profit or 0) >= 0 else 'neg' }}" data-v="{{ s.profit or 0 }}">{{ s.profit|signed }}</td>
       <td class="nowrap"><span class="tag">{{ s.status }}</span></td>
       <td>{{ memo_tip(s.memo) }}</td>
-      <td>{{ s.account_type or '' }}</td>
-      <td><span class="tag">{{ s.link_state }}</span></td>
       <td>
         {% if not s.cancelled_at %}<button type="button" class="cancelbtn" data-cancel="sales" data-id="{{ s.id }}">取消</button>{% endif %}
         <button type="button" class="delbtn" data-del="sales" data-id="{{ s.id }}">削除</button>
@@ -83,7 +81,7 @@
     <form class="addform" id="buy-form" style="display:grid; gap:10px">
       <label>銘柄コード<input type="text" name="code" required>
         <span class="hint">銘柄名は銘柄マスタから自動で入ります</span></label>
-      <label>口座区分
+      <label>口座
         <select name="account_type" required>
           <option value="">選択してください</option>
           {% for a in account_types %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
@@ -118,7 +116,7 @@
     <form class="addform" id="sell-form" style="display:grid; gap:10px">
       <label>銘柄コード<input type="text" name="code" required>
         <span class="hint">銘柄名は銘柄マスタから自動で入ります</span></label>
-      <label>口座区分
+      <label>口座
         <select name="account_type" required>
           <option value="">選択してください</option>
           {% for a in account_types %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
