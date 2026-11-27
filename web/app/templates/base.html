@@ -145,12 +145,23 @@
   function numOrNull(v) { return v === '' || v == null ? null : Number(v); }
   function intOrNull(v) { return v === '' || v == null ? null : parseInt(v, 10); }
 
+  // Re-stripe a table body over its visible rows only, so rows a
+  // page filter hid keep their state (the dashboard filter relies
+  // on this).
+  function stripeVisibleRows(tbody) {
+    let i = 0;
+    tbody.querySelectorAll('tr').forEach(r => {
+      if (r.style.display === 'none') return;
+      r.classList.toggle('alt', i % 2 === 1);
+      i++;
+    });
+  }
+
   // Column sorting, shared by every table with sortable headers:
   // clicking a header sorts its own table by that column (numeric
   // columns compare the raw data-v, text columns the cell text) and
-  // toggles the direction on the next click. Striping is redone over
-  // the visible rows only, so rows hidden by a page filter keep their
-  // state (the dashboard filter relies on this).
+  // toggles the direction on the next click; the table is then
+  // re-striped with stripeVisibleRows.
   document.querySelectorAll('th.sortable').forEach(th => {
     th.addEventListener('click', () => {
       const table = th.closest('table');
@@ -170,24 +181,14 @@
       });
       sorted.forEach(r => tbody.appendChild(r));
       th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (dir === 'asc' ? ' ▲' : ' ▼');
-      let i = 0;
-      tbody.querySelectorAll('tr').forEach(r => {
-        if (r.style.display === 'none') return;
-        r.classList.toggle('alt', i % 2 === 1);
-        i++;
-      });
+      stripeVisibleRows(tbody);
     });
   });
 
   // Visible-row striping for static tables (dashboard does its own after filter/sort)
   document.querySelectorAll('tbody').forEach(tb => {
     if (tb.closest('#holdings')) return;
-    let i = 0;
-    tb.querySelectorAll('tr').forEach(r => {
-      if (r.style.display === 'none') return;
-      r.classList.toggle('alt', i % 2 === 1);
-      i++;
-    });
+    stripeVisibleRows(tb);
   });
 </script>
 </body>
