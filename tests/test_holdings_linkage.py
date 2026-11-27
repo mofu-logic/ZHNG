@@ -597,6 +597,32 @@ def test_delete_buy_blocked_by_later_event(client, db):
     assert _holding(db)["shares"] == 200
 
 
+def test_delete_sale_blocked_by_later_event(client, db):
+    seed_stock_holding(db)  # 特定: 100 shares @ 800
+    sale_id = _sale(client, executed_shares=30).json()["id"]
+    buy_id = _buy(client, avg_price=900, shares=10).json()["id"]
+    holding = _holding(db)
+    assert holding["shares"] == 80
+    assert float(holding["avg_price"]) == 812.5
+
+    # The buy event is now the latest for this holding, so the sale's
+    # linkage can no longer be rolled back on its own.
+    assert client.delete(f"/api/v1/sales/{sale_id}").status_code == 409
+    # Nothing was deleted or rolled back.
+    assert db.execute("SELECT count(*) c FROM sales").fetchone()["c"] == 1
+    holding = _holding(db)
+    assert holding["shares"] == 80
+    assert float(holding["avg_price"]) == 812.5
+    assert len(_events(db)) == 2
+
+    # Deleting in reverse order works.
+    assert client.delete(f"/api/v1/buys/{buy_id}").status_code == 204
+    assert client.delete(f"/api/v1/sales/{sale_id}").status_code == 204
+    holding = _holding(db)
+    assert holding["shares"] == 100
+    assert float(holding["avg_price"]) == 800.0
+
+
 def test_delete_cancelled_buy_does_not_touch_holdings(client, db):
     _seed_stock_only(db)
     buy_id = _buy(client).json()["id"]

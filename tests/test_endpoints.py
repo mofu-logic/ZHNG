@@ -314,6 +314,45 @@ def test_master_explicit_null_clears_only_that_field(client, db):
     assert row["judgment_note"] == "継続保有"
 
 
+def test_master_empty_update_keeps_all_fields(client, db):
+    seed_stock_holding(db)
+    client.put(
+        "/api/v1/dividend-benefits/9999",
+        json={
+            "benefit_value": 5000,
+            "benefit_desc": "食事券",
+            "judgment_on": "2026-11-26",
+            "judgment_note": "継続保有",
+            "funding_target": True,
+            "policy": "配当・優待",
+        },
+    )
+    # An empty body names no field at all: the update degenerates to
+    # an existence check and the row must come back unchanged.
+    r = client.put("/api/v1/dividend-benefits/9999", json={})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["benefit_value"] == 5000.0
+    assert body["benefit_desc"] == "食事券"
+    assert body["judgment_on"] == "2026-11-26"
+    assert body["judgment_note"] == "継続保有"
+    assert body["funding_target"] is True
+    assert body["policy"] == "配当・優待"
+    row = db.execute(
+        "SELECT * FROM dividend_benefits WHERE code = '9999'"
+    ).fetchone()
+    assert float(row["benefit_value"]) == 5000.0
+    assert row["benefit_desc"] == "食事券"
+    assert row["judgment_note"] == "継続保有"
+    assert row["policy"] == "配当・優待"
+    # dividend itself is auto-fetched only; still untouched
+    assert float(row["dividend_forecast"]) == 40.0
+    # The existence check still applies: unknown code is a 404.
+    assert client.put(
+        "/api/v1/dividend-benefits/0000", json={}
+    ).status_code == 404
+
+
 def test_master_page_renders(client, db):
     seed_stock_holding(db)
     r = client.get("/master")
