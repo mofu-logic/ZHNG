@@ -245,3 +245,44 @@ def test_benefit_memos_page_shows_memo_values(client, db):
     assert "000123456" in page  # shareholder number
     assert "カタログ選び" in page  # status
     assert "2027-04-30" in page or "2027/04/30" in page  # deadline_1
+
+
+def test_benefit_memo_empty_put_creates_default_row(client, db):
+    _seed_targets(db)
+    # An empty body still creates the memo row, with every field at
+    # its default: null everywhere, delivery_waiting false.
+    r = client.put("/api/v1/benefit-memos/1001", json={})
+    assert r.status_code == 200
+    body = r.json()
+    for field in MEMO_FIELDS:
+        if field == "delivery_waiting":
+            assert body[field] is False
+        else:
+            assert body[field] is None, field
+    row = db.execute(
+        "SELECT * FROM benefit_memos WHERE code='1001'"
+    ).fetchone()
+    assert row is not None
+    assert row["delivery_waiting"] is False
+    for field in MEMO_FIELDS:
+        if field != "delivery_waiting":
+            assert row[field] is None, field
+
+
+def test_benefit_memo_null_delivery_waiting_clears_to_false(client, db):
+    _seed_targets(db)
+    client.put("/api/v1/benefit-memos/1001", json=FULL_MEMO)
+    # delivery_waiting is NOT NULL, so an explicit null clears the
+    # flag to false rather than storing null; other fields stay.
+    r = client.put(
+        "/api/v1/benefit-memos/1001", json={"delivery_waiting": None}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["delivery_waiting"] is False
+    assert body["status"] == FULL_MEMO["status"]
+    assert body["shareholder_no"] == FULL_MEMO["shareholder_no"]
+    row = db.execute(
+        "SELECT delivery_waiting FROM benefit_memos WHERE code='1001'"
+    ).fetchone()
+    assert row["delivery_waiting"] is False
