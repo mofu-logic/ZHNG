@@ -6,6 +6,7 @@ validated against ^([01][0-9]|2[0-3]):[0-5][0-9]$, used by
 app.fetch_service.next_run_at to compute the next run, shown in the
 /data page tooltip, and edited on /settings with a time input.
 """
+import asyncio
 import re
 from datetime import datetime
 
@@ -151,3 +152,108 @@ def test_settings_page_has_fetch_start_time_input(client, db):
     assert tag is not None
     assert 'type="time"' in tag
     assert 'value="01:30"' in tag
+
+
+# --- 6. scheduler: transient DB failure must not kill the loop -------
+
+
+class _FakeCursor:
+    def __init__(self, value):
+        self._value = value
+
+    def fetchone(self):
+        return {"value": self._value} if self._value is not None else None
+
+
+class _FakeConn:
+    """Minimal connection stand-in: app_config only reads settings."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        key = params[0] if params else None
+        return _FakeCursor("01:00" if key == "fetch_start_time" else None)
+
+
+def test_scheduler_survives_transient_config_read_failure(monkeypatch, caplog):
+    """Regression (review R1): the scheduler re-reads the settings from
+    the DB on every wait iteration. A transient DB failure there used to
+    escape the while loop (only fetch_all was guarded), silently killing
+    the scheduler task until a process restart. The loop must log the
+    failure, back off, and still reach fetch_all once the DB recovers.
+    """
+    from app import fetch_service
+
+    # First config read fails; subsequent reads succeed.
+    db_calls = {"n": 0}
+
+    def fake_db():
+        db_calls["n"] += 1
+        if db_calls["n"] == 1:
+            raise RuntimeError("temporary DB failure")
+        return _FakeConn()
+
+    fetched = []
+
+    async def fake_fetch_all(note, *, db=None, lock=None):
+        fetched.append(note)
+
+    monkeypatch.setattr(fetch_service, "fetch_all", fake_fetch_all)
+    # The app logger sets propagate=False (main.py); let caplog see it.
+    monkeypatch.setattr(fetch_service.logger, "propagate", True)
+
+    # Controlled clock: just before 01:00, then just after it, so the
+    # recovered iteration fires instead of waiting for the next day.
+    times = [
+        datetime(2026, 11, 27, 0, 59, 59, tzinfo=JST),
+        datetime(2026, 11, 27, 1, 0, 1, tzinfo=JST),
+    ]
+
+    class FakeDateTime(datetime):
+        _idx = 0
+
+        @classmethod
+        def now(cls, tz=None):
+            idx = min(cls._idx, len(times) - 1)
+            cls._idx += 1
+            return times[idx]
+
+    monkeypatch.setattr(fetch_service, "datetime", FakeDateTime)
+
+    real_sleep = asyncio.sleep
+
+    async def instant_sleep(*a, **k):
+        await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", instant_sleep)
+
+    async def scenario():
+        task = asyncio.create_task(
+            fetch_service.scheduler(db=fake_db, lock=asyncio.Lock())
+        )
+        try:
+            for _ in range(200):
+                if fetched:
+                    break
+                await real_sleep(0.005)
+            # On the buggy code the task is finished (dead) here and
+            # fetched stays empty.
+            assert not task.done()
+            assert fetched == ["batch"]
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    with caplog.at_level("ERROR", logger="stock-app"):
+        asyncio.run(scenario())
+
+    # The transient failure must be logged (with a traceback), not
+    # silently swallowed.
+    assert any(record.exc_info for record in caplog.records)
