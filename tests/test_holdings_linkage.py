@@ -646,10 +646,11 @@ def test_history_page_linkage_ui(client, db):
     )
 
     page = client.get("/history").text
-    # The history screen hides the account type (no form input, no
-    # table column) even though the API and the linkage keep it.
-    assert 'name="account_type"' not in page
-    assert "口座区分" not in page
+    # The history screen asks for the account type again (required
+    # select in the add dialogs, column in the tables), so a screen
+    # registration names the account it links to.
+    assert 'name="account_type"' in page
+    assert "口座区分" in page
     # Row states: the linked buy is reflected, the plain one is out
     # of scope, and each row offers a cancel action.
     assert "反映済み" in page

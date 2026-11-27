@@ -6,24 +6,14 @@
 </div>
 
 <div id="panel-buy">
-<form class="addform" id="buy-form">
-  <label>銘柄コード<input type="text" name="code" required style="width:90px"></label>
-  <label>取得単価<input type="number" name="avg_price" step="any" min="0" style="width:100px"></label>
-  <label>株数<input type="number" name="shares" min="0" style="width:80px"></label>
-  <label>買付日<input type="date" name="purchase_date"></label>
-  <label>購入方針<input type="text" name="policy" style="width:110px"></label>
-  <label>購入契機<input type="text" name="trigger_note" style="width:130px"></label>
-  <label>メモ<input type="text" name="note" style="width:180px"></label>
-  <label>約定状態
-    <select name="status"><option>約定済</option><option>注文中</option><option>一部約定</option></select>
-  </label>
-  <button type="submit">購入を追加</button>
-</form>
+<div style="margin:4px 0 12px">
+  <button type="button" id="buy-add-open">購入を追加</button>
+</div>
 <div class="tblwrap">
 <table>
   <thead><tr>
     <th>買付日</th><th>銘柄コード</th><th>銘柄名</th><th class="num">取得単価</th><th class="num">株数</th>
-    <th>購入方針</th><th>購入契機</th><th>メモ</th><th>約定状態</th><th>保有への反映</th><th></th>
+    <th>購入方針</th><th>購入契機</th><th>メモ</th><th>約定状態</th><th>口座区分</th><th>保有への反映</th><th></th>
   </tr></thead>
   <tbody>
   {% for b in buys %}
@@ -35,8 +25,9 @@
       <td class="num">{{ b.shares or '' }}</td>
       <td>{{ b.policy or '' }}</td>
       <td>{{ b.trigger_note or '' }}</td>
-      <td class="memo">{{ b.note or '' }}</td>
+      <td>{% if b.note %}{% if b.note|length > 20 %}<span class="memo-tip" data-tip="{{ b.note }}">{{ b.note[:20] }}…</span>{% else %}{{ b.note }}{% endif %}{% endif %}</td>
       <td class="nowrap"><span class="tag">{{ b.status }}</span></td>
+      <td>{{ b.account_type or '' }}</td>
       <td><span class="tag">{{ b.link_state }}</span></td>
       <td>
         {% if not b.cancelled_at %}<button type="button" class="cancelbtn" data-cancel="buys" data-id="{{ b.id }}">取消</button>{% endif %}
@@ -50,26 +41,14 @@
 </div>
 
 <div id="panel-sell" style="display:none">
-<form class="addform" id="sell-form">
-  <label>銘柄コード<input type="text" name="code" required style="width:90px"></label>
-  <label>売り単価<input type="number" name="sell_price" step="any" min="0" style="width:100px"></label>
-  <label>注文株数<input type="number" name="sell_shares" min="0" style="width:80px"></label>
-  <label>約定株数<input type="number" name="executed_shares" min="0" style="width:80px"></label>
-  <label>注文日<input type="date" name="order_start_date"></label>
-  <label>約定日<input type="date" name="executed_date"></label>
-  <label>約定状態
-    <select name="status">
-      <option>自動</option><option>注文中</option><option>一部約定</option><option>約定済</option>
-    </select>
-  </label>
-  <label>メモ<input type="text" name="memo" style="width:160px"></label>
-  <button type="submit">売却を追加</button>
-</form>
+<div style="margin:4px 0 12px">
+  <button type="button" id="sell-add-open">売却を追加</button>
+</div>
 <div class="tblwrap">
 <table>
   <thead><tr>
     <th>注文日</th><th>約定日</th><th>銘柄コード</th><th>銘柄名</th><th class="num">売り単価</th>
-    <th class="num">約定株数／注文株数</th><th class="num">損益</th><th>約定状態</th><th>メモ</th><th>保有への反映</th><th></th>
+    <th class="num">約定株数／注文株数</th><th class="num">損益</th><th>約定状態</th><th>メモ</th><th>口座区分</th><th>保有への反映</th><th></th>
   </tr></thead>
   <tbody>
   {% for s in sales %}
@@ -82,7 +61,8 @@
       <td class="num">{{ s.executed_shares or 0 }} / {{ s.sell_shares or '' }}</td>
       <td class="num {{ 'pos' if (s.profit or 0) >= 0 else 'neg' }}">{{ s.profit|signed }}</td>
       <td class="nowrap"><span class="tag">{{ s.status }}</span></td>
-      <td class="memo">{{ s.memo or '' }}</td>
+      <td>{% if s.memo %}{% if s.memo|length > 20 %}<span class="memo-tip" data-tip="{{ s.memo }}">{{ s.memo[:20] }}…</span>{% else %}{{ s.memo }}{% endif %}{% endif %}</td>
+      <td>{{ s.account_type or '' }}</td>
       <td><span class="tag">{{ s.link_state }}</span></td>
       <td>
         {% if not s.cancelled_at %}<button type="button" class="cancelbtn" data-cancel="sales" data-id="{{ s.id }}">取消</button>{% endif %}
@@ -93,7 +73,79 @@
   </tbody>
 </table>
 </div>
-<div class="foot">約定状態は購入・売却とも「注文中／一部約定／約定済」で統一しています。売却の「自動」を選ぶと約定株数から判定します。銘柄名は銘柄マスタから、売却の取得単価は保有の平均取得単価から自動で入り、損益は（売り単価 − 取得単価）× 約定株数 で自動計算します。</div>
+<div class="foot">約定状態は購入・売却とも「注文中／一部約定／約定済」で統一しています。</div>
+</div>
+
+<div class="dlg-overlay" id="buy-add-overlay" style="display:none">
+  <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="buy-add-title">
+    <div class="dlg-title" id="buy-add-title">購入の追加</div>
+    <form class="addform" id="buy-form" style="display:grid; gap:10px">
+      <label>銘柄コード<input type="text" name="code" required>
+        <span class="hint">銘柄名は銘柄マスタから自動で入ります</span></label>
+      <label>口座区分
+        <select name="account_type" required>
+          <option value="">選択してください</option>
+          {% for a in account_types %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
+        </select>
+        <span class="hint">保有と紐づける口座です。約定済みの買いはこの口座の保有に反映されます</span></label>
+      <label>取得単価<input type="number" name="avg_price" step="any" min="0">
+        <span class="hint">1株あたりの取得単価（円）です</span></label>
+      <label>株数<input type="number" name="shares" min="0">
+        <span class="hint">購入した株数です</span></label>
+      <label>買付日<input type="date" name="purchase_date">
+        <span class="hint">実際に買い付けた日です</span></label>
+      <label>購入方針<input type="text" name="policy">
+        <span class="hint">配当狙い・値上がり狙いなど、この銘柄を買う目的です</span></label>
+      <label>購入契機<input type="text" name="trigger_note">
+        <span class="hint">決算・ニュースなど、買うきっかけになったことです</span></label>
+      <label>メモ<input type="text" name="note">
+        <span class="hint">判断の理由など、あとで振り返るための記録です</span></label>
+      <label>約定状態
+        <select name="status"><option>約定済</option><option>注文中</option><option>一部約定</option></select>
+        <span class="hint">注文の状態です。約定済みの買いだけが保有に反映されます</span></label>
+      <div class="dlg-btns">
+        <button type="button" class="dlg-cancel" id="buy-add-cancel">キャンセル</button>
+        <button type="submit">購入を追加</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="dlg-overlay" id="sell-add-overlay" style="display:none">
+  <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="sell-add-title">
+    <div class="dlg-title" id="sell-add-title">売却の追加</div>
+    <form class="addform" id="sell-form" style="display:grid; gap:10px">
+      <label>銘柄コード<input type="text" name="code" required>
+        <span class="hint">銘柄名は銘柄マスタから自動で入ります</span></label>
+      <label>口座区分
+        <select name="account_type" required>
+          <option value="">選択してください</option>
+          {% for a in account_types %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
+        </select>
+        <span class="hint">保有と紐づける口座です。約定した株数はこの口座の保有から差し引かれます</span></label>
+      <label>売り単価<input type="number" name="sell_price" step="any" min="0">
+        <span class="hint">1株あたりの売り単価（円）です</span></label>
+      <label>注文株数<input type="number" name="sell_shares" min="0">
+        <span class="hint">注文した株数です</span></label>
+      <label>約定株数<input type="number" name="executed_shares" min="0">
+        <span class="hint">実際に約定した株数。取得単価は保有の平均取得単価から自動で入り、損益は自動計算します</span></label>
+      <label>注文日<input type="date" name="order_start_date">
+        <span class="hint">注文を出した日です</span></label>
+      <label>約定日<input type="date" name="executed_date">
+        <span class="hint">約定した日です。まだ約定していなければ空欄で構いません</span></label>
+      <label>約定状態
+        <select name="status">
+          <option>自動</option><option>注文中</option><option>一部約定</option><option>約定済</option>
+        </select>
+        <span class="hint">「自動」は約定株数から判定します</span></label>
+      <label>メモ<input type="text" name="memo">
+        <span class="hint">判断の理由など、あとで振り返るための記録です</span></label>
+      <div class="dlg-btns">
+        <button type="button" class="dlg-cancel" id="sell-add-cancel">キャンセル</button>
+        <button type="submit">売却を追加</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <script>
@@ -103,6 +155,7 @@
     const f = new FormData(e.target);
     await apiJson('POST', '/api/v1/buys', {
       code: strOrNull(f.get('code')),
+      account_type: strOrNull(f.get('account_type')),
       avg_price: numOrNull(f.get('avg_price')), shares: intOrNull(f.get('shares')),
       purchase_date: strOrNull(f.get('purchase_date')), policy: strOrNull(f.get('policy')),
       trigger_note: strOrNull(f.get('trigger_note')), note: strOrNull(f.get('note')),
@@ -115,6 +168,7 @@
     const f = new FormData(e.target);
     await apiJson('POST', '/api/v1/sales', {
       code: strOrNull(f.get('code')),
+      account_type: strOrNull(f.get('account_type')),
       sell_price: numOrNull(f.get('sell_price')), sell_shares: intOrNull(f.get('sell_shares')),
       executed_shares: intOrNull(f.get('executed_shares')),
       order_start_date: strOrNull(f.get('order_start_date')),
@@ -157,5 +211,24 @@
   }
   tabs.forEach(t => t.addEventListener('click', () => activate(t.dataset.tab)));
   if (location.hash === '#sell') activate('sell');
+
+  // Add forms live in modal dialogs, same shell as the holdings add
+  // form on the dashboard: open button, cancel button, backdrop click.
+  function wireDialog(openId, overlayId, cancelId) {
+    const overlay = document.getElementById(overlayId);
+    const open = () => {
+      overlay.style.display = 'flex';
+      requestAnimationFrame(() => overlay.classList.add('show'));
+    };
+    const close = () => {
+      overlay.classList.remove('show');
+      setTimeout(() => { overlay.style.display = 'none'; }, 150);
+    };
+    document.getElementById(openId).addEventListener('click', open);
+    document.getElementById(cancelId).addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  }
+  wireDialog('buy-add-open', 'buy-add-overlay', 'buy-add-cancel');
+  wireDialog('sell-add-open', 'sell-add-overlay', 'sell-add-cancel');
 </script>
 {% endblock %}

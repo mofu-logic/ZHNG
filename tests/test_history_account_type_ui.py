@@ -1,11 +1,13 @@
-"""History screen: the account type stays internal.
+"""History screen: the account type is shown and asked again.
 
-Owner decision: the account type (口座区分) is not shown or asked on
-the history screen -- no column in either table, no select in either
-add form, and the forms no longer submit it. Internally nothing
-changes: the API still accepts account_type, and registrations that
-name one keep linking to holdings exactly as before (covered by
-test_holdings_linkage.py).
+Owner decision (revising the PR #44 round): the account type
+(口座区分) returns to the history screen -- a column in both tables
+and a required select in both add dialogs (which are modal dialogs
+now; see tests/test_history_dialog.py for the full dialog spec).
+Without it a screen registration could never name the account its
+holding lives under, so screen trades stayed unlinked. The API
+itself still accepts registrations without an account type; those
+stay unlinked, as the existing rows are.
 
 The same screen fix also keeps the status tag on one line: the
 約定状態 cell gets the shared .nowrap class, the same mechanism the
@@ -48,29 +50,31 @@ def _seed_buy_and_sale(client):
     assert r.status_code == 201
 
 
-def test_history_page_hides_account_type(client, db):
+def test_history_page_shows_account_type(client, db):
     page = client.get("/history").text
-    # No form input, no JS payload field, no visible label anywhere
-    # on the page.
-    assert 'name="account_type"' not in page
-    assert "f.get('account_type')" not in page
-    assert "口座区分" not in page
-    # Both tables keep the neighbouring columns; only 口座区分 goes.
+    # A form input, a JS payload field and a visible label are all
+    # back on the page.
+    assert 'name="account_type"' in page
+    assert "f.get('account_type')" in page
+    assert "口座区分" in page
+    # Both tables carry the account type column alongside the
+    # neighbouring columns.
     heads = re.findall(r"<thead>(.*?)</thead>", page, re.S)
     assert len(heads) == 2
     for head in heads:
+        assert "口座区分" in head
         assert "約定状態" in head
         assert "保有への反映" in head
 
 
-def test_history_forms_have_no_account_type_input(client, db):
+def test_history_forms_have_account_type_input(client, db):
     page = client.get("/history").text
     for form_id in ("buy-form", "sell-form"):
         m = re.search(
             rf'<form[^>]*id="{form_id}"[^>]*>(.*?)</form>', page, re.S
         )
         assert m, form_id
-        assert "account_type" not in m.group(1), form_id
+        assert 'name="account_type"' in m.group(1), form_id
 
 
 def test_status_cells_do_not_wrap(client, db):
