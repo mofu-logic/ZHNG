@@ -63,6 +63,8 @@ from app.services import (
     update_candidate,
 )
 from app.settings import (
+    DEFAULT_FETCH_START_TIME,
+    FETCH_START_TIME_PATTERN,
     app_config,
     get_settings,
     prune_app_logs,
@@ -608,7 +610,7 @@ class SettingsIn(BaseModel):
     otel_endpoint: str | None = None
     swagger_enabled: bool = False
     fetch_start_time: str = Field(
-        default="01:00", pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$"
+        default=DEFAULT_FETCH_START_TIME, pattern=FETCH_START_TIME_PATTERN
     )
 
 

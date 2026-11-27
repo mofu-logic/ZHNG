@@ -330,7 +330,8 @@ async def scheduler(*, db=_default_db, lock):
             start_time = app_config(conn)["fetch_start_time"]
         now = datetime.now(JST)
         target = next_run_at(now, start_time)
-        await asyncio.sleep(min((target - now).total_seconds(), 60))
+        wait_seconds = min((target - now).total_seconds(), 60)
+        await asyncio.sleep(wait_seconds)
         if datetime.now(JST) < target:
             continue
         try:

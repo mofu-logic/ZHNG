@@ -1,8 +1,8 @@
 """設定まわりのサービス層。
 
-数値設定（KPI）とアプリ設定（ログ保持期間・OTel・Swagger）の
-読み書き。月あたり所得の目標はここで自動算出する（直接入力した
-値を保存しない）。
+数値設定（KPI）とアプリ設定（ログ保持期間・OTel・Swagger・
+夜間バッチ開始時刻）の読み書き。月あたり所得の目標はここで
+自動算出する（直接入力した値を保存しない）。
 
 formatting.py（round_half_up）と config.py にのみ依存する
 （循環 import を作らない）。
@@ -13,7 +13,8 @@ import re
 from app.formatting import round_half_up
 
 DEFAULT_FETCH_START_TIME = "01:00"
-_FETCH_START_TIME_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+FETCH_START_TIME_PATTERN = r"^([01][0-9]|2[0-3]):[0-5][0-9]$"
+_FETCH_START_TIME_RE = re.compile(FETCH_START_TIME_PATTERN)
 
 
 def is_valid_fetch_start_time(value):
@@ -101,7 +102,8 @@ def _raw_setting(conn, key):
 
 
 def app_config(conn):
-    """The non-KPI app settings: log retention and OTel integration."""
+    """The non-KPI app settings: log retention, OTel integration,
+    Swagger, and the nightly fetch start time."""
     retention = _raw_setting(conn, "log_retention_days")
     try:
         retention_days = (
