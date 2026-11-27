@@ -280,7 +280,6 @@ def dashboard(request: Request):
             y_buy=div / avg if avg else None,
             y_now=div / price if price else None,
             yb_now=(div_amt + benefit) / (price * shares) if price else None,
-            yb_buy=(div_amt + benefit) / (avg * shares) if avg else None,
         )
         items.append(item)
         if r["price_at"] and (price_at is None or r["price_at"] > price_at):
