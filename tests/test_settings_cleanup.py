@@ -27,6 +27,7 @@ Red / Green の区別（実装前の現行コードに対する結果）:
   - created_on のバックフィルと方針コピーが走らないこと
   - フラグの settings 行が初期化で消えること
   - web/app のソースに旧キー名・フラグ名が残っていないこと
+    （後方互換の掃除専用である db.py の _LEGACY_ 定数定義を除く）
 - Green（回帰防止。現行コードでも満たされ、変更後も保たれる）:
   - 新キーだけを持つDBを初期化しても値が変わらないこと
   - 移行済みデータ（移行で入った created_on・方針）が初期化で
@@ -251,13 +252,39 @@ def test_already_migrated_data_is_unchanged_by_initialize(db):
 # ------------------------------------------------------- source hygiene
 
 
+def _without_legacy_constant_definitions(text: str) -> str:
+    """db.py のテキストから _LEGACY_ 定数の定義を取り除いて返す。
+
+    後方互換の掃除コードは旧名を名指しするのが仕事なので、その定数
+    定義だけは旧名の出現を例外とする。定義の形が変わって取り除け
+    なくなった場合は旧名が残ったままになるため、テストは失敗側に
+    倒れる。
+    """
+    text = re.sub(r"^_LEGACY_YIELD_KEY = .*$", "", text, flags=re.MULTILINE)
+    text = re.sub(
+        r"^_LEGACY_FLAG_KEYS = \(.*?^\)$",
+        "",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    return text
+
+
 def test_app_source_has_no_legacy_setting_names():
+    """旧名が現れるのは db.py の _LEGACY_ 定数定義だけであること。
+
+    設定の読み書き・表示・保存といった通常の経路に旧名が紛れ込ま
+    ないことを保証する。後方互換の掃除コードの定数定義だけは、
+    旧名を名指しするのが仕事なので例外とする。
+    """
     suffixes = {".py", ".html", ".sql", ".css", ".js"}
     offenders = []
     for path in sorted(APP_DIR.rglob("*")):
         if "__pycache__" in path.parts or path.suffix not in suffixes:
             continue
         text = path.read_text(encoding="utf-8")
+        if path == APP_DIR / "db.py":
+            text = _without_legacy_constant_definitions(text)
         for name in LEGACY_NAMES:
             if name in text:
                 offenders.append(f"{path.relative_to(APP_DIR)}: {name}")
