@@ -23,7 +23,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, StringConstraints
 
-from app.config import DATABASE_URL, JST, TRADE_STATUSES
+from app.config import DATABASE_URL, JST
 from app.db import SCHEMA, db, initialize_database
 from app.formatting import (
     fnum,
@@ -50,8 +50,28 @@ from app.yahoo import (
     parse_profile_page,
     suffix_for_market,
 )
+from app.services import (
+    candidates_at_target,
+    candidate_exists,
+    create_buy,
+    create_sale,
+    delete_buy,
+    delete_candidate,
+    delete_sale,
+    list_candidate_rows,
+    register_candidate,
+    update_benefit,
+    update_candidate,
+)
+from app.settings import (
+    app_config,
+    get_settings,
+    prune_app_logs,
+    settings_full_view,
+    update_settings,
+)
 
-# formatting.py / yahoo.py / config.py / db.py へ移したもののうち、
+# formatting.py / yahoo.py / config.py / db.py / settings.py へ移したもののうち、
 # main.py 内のコードでは直接使わないものもテストが app.main 経由で
 # import しているため、ここで再エクスポートする。__all__ に載せることで
 # 未使用 import として lint に指摘されないようにする。
@@ -63,6 +83,7 @@ __all__ = [
     "fmt_price",
     "fmt_signed",
     "fmt_yen",
+    "round_half_up",
 ]
 
 tracer = setup_observability(DATABASE_URL)
@@ -453,18 +474,6 @@ async def request_logging(request: Request, call_next):
         return response
 
 
-def get_settings(conn):
-    """Numeric settings as floats (the KPI values). Non-numeric values
-    (e.g. the OTel endpoint) are skipped here and read via app_config."""
-    out = {}
-    for r in conn.execute("SELECT key, value FROM settings").fetchall():
-        try:
-            out[r["key"]] = float(r["value"])
-        except (TypeError, ValueError):
-            continue
-    return out
-
-
 # ---------------------------------------------------------------- pages
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
@@ -723,291 +732,6 @@ def history(request: Request):
             "SELECT * FROM sales ORDER BY order_start_date DESC NULLS LAST, id DESC"
         ).fetchall()
     return templates.TemplateResponse(request, "history.html", dict(buys=buys, sales=sales))
-
-
-def _upsert_stock(conn, code, name):
-    if code and name:
-        conn.execute(
-            "INSERT INTO stocks(code, name) VALUES (%s, %s)"
-            " ON CONFLICT(code) DO NOTHING",
-            (code, name),
-        )
-
-
-# ---------------------------------------------------------------- services
-# The write/read logic for trades, the dividend/benefit master and the
-# settings lives here, shared by the JSON API (/api/v1) and anything
-# else that needs it. Derivations (trade status, sale profit, monthly
-# income target) exist exactly once, in this layer.
-
-
-def create_buy(conn, *, code, name, avg_price, shares, purchase_date,
-               policy, trigger_note, note, status):
-    final_status = status if status in TRADE_STATUSES else "約定済"
-    _upsert_stock(conn, code, name)
-    row = conn.execute(
-        "INSERT INTO buy_lots(code, name, avg_price, shares, purchase_date,"
-        " policy, trigger_note, note, status) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)"
-        " RETURNING *",
-        (code, name, avg_price, shares, purchase_date, policy,
-         trigger_note, note, final_status),
-    ).fetchone()
-    return row
-
-
-def delete_buy(conn, lot_id):
-    cur = conn.execute("DELETE FROM buy_lots WHERE id = %s", (lot_id,))
-    return cur.rowcount > 0
-
-
-def create_sale(conn, *, code, name, buy_price, shares, purchase_date,
-                sell_price, sell_shares, executed_shares, order_start_date,
-                executed_date, profit, status, memo):
-    ex = executed_shares or 0
-    pf = profit
-    if pf is None and buy_price is not None and sell_price is not None and ex:
-        pf = (sell_price - buy_price) * ex
-    if status not in TRADE_STATUSES:
-        # "自動" (or anything unspecified): derive from executed shares.
-        if sell_shares and ex >= sell_shares:
-            status = "約定済"
-        elif ex > 0:
-            status = "一部約定"
-        else:
-            status = "注文中"
-    _upsert_stock(conn, code, name)
-    row = conn.execute(
-        "INSERT INTO sales(code, name, buy_price, shares, purchase_date,"
-        " sell_price, sell_shares, executed_shares, order_start_date,"
-        " executed_date, profit, status, memo)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-        (code, name, buy_price, shares, purchase_date, sell_price,
-         sell_shares, ex, order_start_date, executed_date, pf, status, memo),
-    ).fetchone()
-    return row
-
-
-def delete_sale(conn, sale_id):
-    cur = conn.execute("DELETE FROM sales WHERE id = %s", (sale_id,))
-    return cur.rowcount > 0
-
-
-def list_candidate_rows(conn):
-    """Purchase candidates with their latest daily snapshot."""
-    return conn.execute(
-        """
-        SELECT c.code, c.added_at, c.policy, c.memo, c.target_price, s.name,
-               snap.snap_date, snap.close_price, snap.prev_close,
-               snap.dividend_forecast, snap.dividend_yield, snap.per, snap.pbr
-        FROM candidates c
-        LEFT JOIN stocks s ON s.code = c.code
-        LEFT JOIN LATERAL (
-            SELECT * FROM daily_snapshots d
-            WHERE d.code = c.code ORDER BY d.snap_date DESC LIMIT 1
-        ) snap ON true
-        ORDER BY c.added_at, c.code
-        """
-    ).fetchall()
-
-
-def candidate_exists(conn, code):
-    return (
-        conn.execute(
-            "SELECT 1 FROM candidates WHERE code = %s", (code,)
-        ).fetchone()
-        is not None
-    )
-
-
-def register_candidate(conn, code, market, name):
-    conn.execute(
-        "INSERT INTO stocks(code, name, market) VALUES (%s, %s, %s)"
-        " ON CONFLICT(code) DO UPDATE SET"
-        " name = COALESCE(EXCLUDED.name, stocks.name),"
-        " market = COALESCE(EXCLUDED.market, stocks.market)",
-        (code, name, market),
-    )
-    conn.execute(
-        "INSERT INTO candidates(code) VALUES (%s)"
-        " ON CONFLICT(code) DO NOTHING",
-        (code,),
-    )
-
-
-def delete_candidate(conn, code):
-    cur = conn.execute("DELETE FROM candidates WHERE code = %s", (code,))
-    return cur.rowcount > 0
-
-
-def update_candidate(conn, code, **fields):
-    """Partial update: only the fields present in `fields` are updated.
-
-    Fields omitted by the caller keep their stored value; a field
-    explicitly set to None is cleared. An empty update only checks
-    that the row exists (so PUT {} keeps the row unchanged).
-    """
-    fields = {k: v for k, v in fields.items()
-              if k in ("policy", "memo", "target_price")}
-    if not fields:
-        row = conn.execute(
-            "SELECT 1 FROM candidates WHERE code = %s", (code,)
-        ).fetchone()
-        return row is not None
-    sets = [f"{key} = %s" for key in fields]
-    params = list(fields.values())
-    params.append(code)
-    cur = conn.execute(
-        f"UPDATE candidates SET {', '.join(sets)} WHERE code = %s",
-        tuple(params),
-    )
-    return cur.rowcount > 0
-
-
-def candidates_at_target(conn):
-    """Candidates whose latest close has reached their target price."""
-    return conn.execute(
-        """
-        SELECT c.code, s.name, c.target_price, snap.close_price
-        FROM candidates c
-        LEFT JOIN stocks s ON s.code = c.code
-        JOIN LATERAL (
-            SELECT * FROM daily_snapshots d
-            WHERE d.code = c.code ORDER BY d.snap_date DESC LIMIT 1
-        ) snap ON true
-        WHERE c.target_price IS NOT NULL
-          AND snap.close_price <= c.target_price
-        ORDER BY c.code
-        """
-    ).fetchall()
-
-
-def update_benefit(conn, code, **fields):
-    """Partial update: only the fields present in `fields` are updated.
-
-    Fields omitted by the caller keep their stored value; a field
-    explicitly set to None is cleared. An empty update only checks
-    that the row exists (so PUT {} keeps the row unchanged).
-    """
-    fields = {k: v for k, v in fields.items() if k in (
-        "benefit_value", "benefit_desc", "judgment_on",
-        "judgment_note", "funding_target", "policy",
-    )}
-    if not fields:
-        row = conn.execute(
-            "SELECT 1 FROM dividend_benefits WHERE code = %s", (code,)
-        ).fetchone()
-        return row is not None
-    sets = []
-    params = []
-    for key, value in fields.items():
-        if key == "funding_target":
-            value = True if value else None
-        sets.append(f"{key} = %s")
-        params.append(value)
-    sets.append("info_updated_on = %s")
-    params.append(datetime.now(JST).date())
-    params.append(code)
-    cur = conn.execute(
-        f"UPDATE dividend_benefits SET {', '.join(sets)} WHERE code = %s",
-        tuple(params),
-    )
-    return cur.rowcount > 0
-
-
-def settings_view(st):
-    """The settings as the UI/API present them (percent units, with the
-    derived monthly target)."""
-    total = st.get("target_dividend_total", 0)
-    tax = st.get("tax_rate", 0.20315)
-    return dict(
-        tax_rate_pct=(tax * 100),
-        target_dividend_total=total,
-        target_monthly_income=round_half_up(total * (1 - tax) / 12),
-        target_yield_buy_pct=(st.get("target_yield_buy", 0) * 100),
-        target_yield_now_pct=(st.get("target_yield_now", 0) * 100),
-        target_yield_value_pct=(st.get("target_yield_value", 0.04) * 100),
-    )
-
-
-def update_settings(conn, *, tax_rate_pct, target_dividend_total,
-                    target_yield_buy_pct, target_yield_now_pct,
-                    target_yield_value_pct, log_retention_days=90,
-                    otel_enabled=False, otel_endpoint=None,
-                    swagger_enabled=False):
-    # Monthly after-tax income target is derived, not entered directly:
-    # annual dividend target x (1 - tax rate) / 12.
-    monthly = round_half_up(target_dividend_total * (1 - tax_rate_pct / 100) / 12)
-    values = {
-        "tax_rate": tax_rate_pct / 100,
-        "target_dividend_total": target_dividend_total,
-        "target_monthly_income": float(monthly),
-        "target_yield_buy": target_yield_buy_pct / 100,
-        "target_yield_now": target_yield_now_pct / 100,
-        "target_yield_value": target_yield_value_pct / 100,
-        "log_retention_days": float(log_retention_days),
-    }
-    for k, v in values.items():
-        conn.execute(
-            "INSERT INTO settings(key, value) VALUES (%s, %s)"
-            " ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
-            (k, repr(v)),
-        )
-    # Non-numeric settings are stored as plain strings.
-    for k, v in (
-        ("otel_enabled", "true" if otel_enabled else "false"),
-        ("otel_endpoint", otel_endpoint or ""),
-        ("swagger_enabled", "true" if swagger_enabled else "false"),
-    ):
-        conn.execute(
-            "INSERT INTO settings(key, value) VALUES (%s, %s)"
-            " ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
-            (k, v),
-        )
-    values["otel_enabled"] = bool(otel_enabled)
-    values["swagger_enabled"] = bool(swagger_enabled)
-    return values
-
-
-DEFAULT_LOG_RETENTION_DAYS = 90
-
-
-def _raw_setting(conn, key):
-    row = conn.execute(
-        "SELECT value FROM settings WHERE key = %s", (key,)
-    ).fetchone()
-    return row["value"] if row else None
-
-
-def app_config(conn):
-    """The non-KPI app settings: log retention and OTel integration."""
-    retention = _raw_setting(conn, "log_retention_days")
-    try:
-        retention_days = (
-            int(float(retention)) if retention else DEFAULT_LOG_RETENTION_DAYS
-        )
-    except ValueError:
-        retention_days = DEFAULT_LOG_RETENTION_DAYS
-    return dict(
-        log_retention_days=retention_days,
-        otel_enabled=_raw_setting(conn, "otel_enabled") == "true",
-        otel_endpoint=_raw_setting(conn, "otel_endpoint") or "",
-        swagger_enabled=_raw_setting(conn, "swagger_enabled") == "true",
-    )
-
-
-def settings_full_view(conn):
-    """Everything the settings page / API exposes: KPI view + app config."""
-    view = settings_view(get_settings(conn))
-    view.update(app_config(conn))
-    return view
-
-
-def prune_app_logs(conn, retention_days):
-    cur = conn.execute(
-        "DELETE FROM app_logs WHERE ts < now() - make_interval(days => %s)",
-        (retention_days,),
-    )
-    return cur.rowcount
 
 
 @app.get("/master", response_class=HTMLResponse)
