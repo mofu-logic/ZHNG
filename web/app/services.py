@@ -9,8 +9,14 @@ db.py と config.py にのみ依存する（循環 import を作らない）。
 """
 
 from datetime import datetime
+from decimal import Decimal
 
 from app.config import JST, TRADE_STATUSES
+
+
+class LinkageError(Exception):
+    """A trade cannot be linked to holdings as requested (the
+    caller turns this into a 422 and nothing is registered)."""
 
 
 def _upsert_stock(conn, code, name):
@@ -22,28 +28,282 @@ def _upsert_stock(conn, code, name):
         )
 
 
+def upsert_stock_info(conn, code, name, market):
+    """Register a stock-master row from fetched info (name and
+    market), filling in only what an existing row is missing."""
+    conn.execute(
+        "INSERT INTO stocks(code, name, market) VALUES (%s, %s, %s)"
+        " ON CONFLICT(code) DO UPDATE SET"
+        " name = COALESCE(EXCLUDED.name, stocks.name),"
+        " market = COALESCE(EXCLUDED.market, stocks.market)",
+        (code, name, market),
+    )
+
+
+# ------------------------------------------------------------ holdings linkage
+# A trade that names an account type moves the holding for
+# (code, account_type) when it registers, and every such move is
+# recorded in holding_events with the before/after state. Cancelling
+# or deleting the trade posts a reversal event that restores the
+# recorded "before" state exactly. Trades without an account type
+# (including every row from before this feature) never link.
+
+
+def _holding_row(conn, code, account_type):
+    return conn.execute(
+        "SELECT * FROM holdings WHERE code = %s AND account_type = %s",
+        (code, account_type),
+    ).fetchone()
+
+
+def _record_event(conn, *, code, account_type, kind, source_type,
+                  source_id, delta_shares, before, after, reverses=None,
+                  row_before=None):
+    # row_before carries the holdings row's other columns (lent /
+    # ordered shares, custody type) when the event deletes the row:
+    # without them a later reversal could not restore the row whole.
+    lent, ordered, custody = row_before or (None, None, None)
+    conn.execute(
+        "INSERT INTO holding_events(code, account_type, kind,"
+        " source_type, source_id, delta_shares, shares_before,"
+        " shares_after, avg_price_before, avg_price_after,"
+        " lent_shares_before, ordered_shares_before,"
+        " custody_type_before, reverses_event_id)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (code, account_type, kind, source_type, source_id, delta_shares,
+         before[0], after[0], before[1], after[1],
+         lent, ordered, custody, reverses),
+    )
+
+
+def _row_extras(row):
+    """The holdings columns a shares/price restore alone would lose."""
+    return (row["lent_shares"], row["ordered_shares"], row["custody_type"])
+
+
+def _linkage_event(conn, source_type, source_id, kind):
+    return conn.execute(
+        "SELECT * FROM holding_events WHERE source_type = %s"
+        " AND source_id = %s AND kind = %s",
+        (source_type, source_id, kind),
+    ).fetchone()
+
+
+def _latest_open_event(conn, code, account_type):
+    """The newest buy/sell event for a holding that no reversal has
+    undone yet. Only that event may be rolled back: undoing an older
+    one would silently rewrite the newer changes on top of it."""
+    return conn.execute(
+        "SELECT * FROM holding_events e"
+        " WHERE e.code = %s AND e.account_type = %s"
+        " AND e.kind IN ('buy', 'sell')"
+        " AND NOT EXISTS (SELECT 1 FROM holding_events r"
+        "                 WHERE r.reverses_event_id = e.id)"
+        " ORDER BY e.id DESC LIMIT 1",
+        (code, account_type),
+    ).fetchone()
+
+
+def _apply_reversal(conn, event, *, kind, source_type, source_id):
+    """Undo a linkage event, restoring the holding to the exact
+    state the event recorded as its "before" (shares and average
+    price; a holding row the event deleted comes back, one it
+    created disappears). The reversal is itself recorded as an
+    event pointing at the original."""
+    code, account_type = event["code"], event["account_type"]
+    holding = _holding_row(conn, code, account_type)
+    current = (
+        (holding["shares"], holding["avg_price"]) if holding else (0, None)
+    )
+    target = (event["shares_before"], event["avg_price_before"])
+    row_before = None
+    if target[0] == 0:
+        if holding is not None:
+            row_before = _row_extras(holding)
+            conn.execute(
+                "DELETE FROM holdings WHERE id = %s", (holding["id"],)
+            )
+    elif holding is None:
+        conn.execute(
+            "INSERT INTO holdings(code, account_type, avg_price, shares,"
+            " lent_shares, ordered_shares, custody_type)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (code, account_type, target[1], target[0],
+             event["lent_shares_before"] or 0,
+             event["ordered_shares_before"] or 0,
+             event["custody_type_before"]),
+        )
+    else:
+        conn.execute(
+            "UPDATE holdings SET shares = %s, avg_price = %s,"
+            " updated_at = now() WHERE id = %s",
+            (target[0], target[1], holding["id"]),
+        )
+    _record_event(
+        conn, code=code, account_type=account_type, kind=kind,
+        source_type=source_type, source_id=source_id,
+        delta_shares=-event["delta_shares"],
+        before=current, after=target, reverses=event["id"],
+        row_before=row_before,
+    )
+
+
+def _rollback_plan(conn, source_type, source_id, kind):
+    """How cancelling/deleting a trade interacts with its linkage
+    event: 'plain' (no linkage event, nothing to roll back),
+    'rollback' (the event is still the holding's latest open event)
+    or 'blocked' (a later event sits on top of it)."""
+    event = _linkage_event(conn, source_type, source_id, kind)
+    if event is None:
+        return "plain", None
+    latest = _latest_open_event(conn, event["code"], event["account_type"])
+    if latest is None or latest["id"] != event["id"]:
+        return "blocked", event
+    return "rollback", event
+
+
+def final_buy_status(status):
+    """The status a buy is stored with: anything outside the shared
+    vocabulary (including None) means the order has executed."""
+    return status if status in TRADE_STATUSES else "約定済"
+
+
+def buy_linkage_applies(*, account_type, status, shares, avg_price):
+    """Whether registering a buy also moves the holding: the trade
+    must name an account, be executed, and carry a quantity and a
+    price (the holding's average cannot be derived without both)."""
+    return (
+        account_type is not None
+        and final_buy_status(status) == "約定済"
+        and bool(shares)
+        and avg_price is not None
+    )
+
+
+def _apply_buy_linkage(conn, lot):
+    code, account_type = lot["code"], lot["account_type"]
+    shares = lot["shares"]
+    price = Decimal(str(lot["avg_price"]))
+    holding = _holding_row(conn, code, account_type)
+    if holding is None:
+        before = (0, None)
+        after = (shares, price)
+        conn.execute(
+            "INSERT INTO holdings(code, account_type, avg_price, shares)"
+            " VALUES (%s, %s, %s, %s)",
+            (code, account_type, price, shares),
+        )
+    else:
+        total = holding["shares"] + shares
+        new_avg = (
+            holding["avg_price"] * holding["shares"] + price * shares
+        ) / total
+        before = (holding["shares"], holding["avg_price"])
+        after = (total, new_avg)
+        conn.execute(
+            "UPDATE holdings SET shares = %s, avg_price = %s,"
+            " updated_at = now() WHERE id = %s",
+            (total, new_avg, holding["id"]),
+        )
+    _record_event(
+        conn, code=code, account_type=account_type, kind="buy",
+        source_type="buy_lot", source_id=lot["id"],
+        delta_shares=shares, before=before, after=after,
+    )
+
+
 def create_buy(conn, *, code, name, avg_price, shares, purchase_date,
-               policy, trigger_note, note, status):
-    final_status = status if status in TRADE_STATUSES else "約定済"
+               policy, trigger_note, note, status, account_type=None):
+    final_status = final_buy_status(status)
     _upsert_stock(conn, code, name)
     row = conn.execute(
         "INSERT INTO buy_lots(code, name, avg_price, shares, purchase_date,"
-        " policy, trigger_note, note, status) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+        " policy, trigger_note, note, status, account_type)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
         " RETURNING *",
         (code, name, avg_price, shares, purchase_date, policy,
-         trigger_note, note, final_status),
+         trigger_note, note, final_status, account_type),
     ).fetchone()
+    if buy_linkage_applies(account_type=account_type, status=status,
+                           shares=shares, avg_price=avg_price):
+        _apply_buy_linkage(conn, row)
     return row
 
 
+def cancel_buy(conn, lot_id):
+    """Mark a buy cancelled, rolling its holdings linkage back when
+    it has one. Returns (outcome, row): 'not_found', 'already' and
+    'blocked' map to 404/409/409 at the API layer, 'ok' carries the
+    updated row. A buy without a linkage event is only marked."""
+    row = conn.execute(
+        "SELECT * FROM buy_lots WHERE id = %s", (lot_id,)
+    ).fetchone()
+    if row is None:
+        return "not_found", None
+    if row["cancelled_at"] is not None:
+        return "already", row
+    outcome, event = _rollback_plan(conn, "buy_lot", lot_id, "buy")
+    if outcome == "blocked":
+        return "blocked", row
+    if event is not None:
+        _apply_reversal(conn, event, kind="cancel",
+                        source_type="buy_lot", source_id=lot_id)
+    row = conn.execute(
+        "UPDATE buy_lots SET cancelled_at = now() WHERE id = %s"
+        " RETURNING *",
+        (lot_id,),
+    ).fetchone()
+    return "ok", row
+
+
 def delete_buy(conn, lot_id):
-    cur = conn.execute("DELETE FROM buy_lots WHERE id = %s", (lot_id,))
-    return cur.rowcount > 0
+    """Delete a buy lot, rolling its linkage back first when it has
+    one and is not already cancelled. Returns 'not_found',
+    'blocked' (a later event sits on the holding; nothing is
+    deleted) or 'deleted'."""
+    row = conn.execute(
+        "SELECT * FROM buy_lots WHERE id = %s", (lot_id,)
+    ).fetchone()
+    if row is None:
+        return "not_found"
+    if row["cancelled_at"] is None:
+        outcome, event = _rollback_plan(conn, "buy_lot", lot_id, "buy")
+        if outcome == "blocked":
+            return "blocked"
+        if event is not None:
+            _apply_reversal(conn, event, kind="delete",
+                            source_type="buy_lot", source_id=lot_id)
+    conn.execute("DELETE FROM buy_lots WHERE id = %s", (lot_id,))
+    return "deleted"
+
+
+def _apply_sale_linkage(conn, sale, holding):
+    ex = sale["executed_shares"]
+    remaining = holding["shares"] - ex
+    before = (holding["shares"], holding["avg_price"])
+    row_before = None
+    if remaining == 0:
+        after = (0, None)
+        row_before = _row_extras(holding)
+        conn.execute("DELETE FROM holdings WHERE id = %s", (holding["id"],))
+    else:
+        after = (remaining, holding["avg_price"])
+        conn.execute(
+            "UPDATE holdings SET shares = %s, updated_at = now()"
+            " WHERE id = %s",
+            (remaining, holding["id"]),
+        )
+    _record_event(
+        conn, code=sale["code"], account_type=sale["account_type"],
+        kind="sell", source_type="sale", source_id=sale["id"],
+        delta_shares=-ex, before=before, after=after,
+        row_before=row_before,
+    )
 
 
 def create_sale(conn, *, code, name, buy_price, shares, purchase_date,
                 sell_price, sell_shares, executed_shares, order_start_date,
-                executed_date, profit, status, memo):
+                executed_date, profit, status, memo, account_type=None):
     ex = executed_shares or 0
     pf = profit
     if pf is None and buy_price is not None and sell_price is not None and ex:
@@ -56,21 +316,72 @@ def create_sale(conn, *, code, name, buy_price, shares, purchase_date,
             status = "一部約定"
         else:
             status = "注文中"
+    holding = None
+    if account_type is not None and ex > 0:
+        # The sale links by its executed shares: the holding for
+        # this exact account must cover them, otherwise the sale
+        # itself is refused (LinkageError -> 422, nothing stored).
+        holding = _holding_row(conn, code, account_type)
+        if holding is None or holding["shares"] < ex:
+            raise LinkageError(
+                "約定株数が保有株数を超えているため、売却を登録できません"
+            )
     _upsert_stock(conn, code, name)
     row = conn.execute(
         "INSERT INTO sales(code, name, buy_price, shares, purchase_date,"
         " sell_price, sell_shares, executed_shares, order_start_date,"
-        " executed_date, profit, status, memo)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+        " executed_date, profit, status, memo, account_type)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
         (code, name, buy_price, shares, purchase_date, sell_price,
-         sell_shares, ex, order_start_date, executed_date, pf, status, memo),
+         sell_shares, ex, order_start_date, executed_date, pf, status,
+         memo, account_type),
     ).fetchone()
+    if holding is not None:
+        _apply_sale_linkage(conn, row, holding)
     return row
 
 
+def cancel_sale(conn, sale_id):
+    """Mark a sale cancelled, rolling its holdings linkage back
+    when it has one. Same outcomes as cancel_buy."""
+    row = conn.execute(
+        "SELECT * FROM sales WHERE id = %s", (sale_id,)
+    ).fetchone()
+    if row is None:
+        return "not_found", None
+    if row["cancelled_at"] is not None:
+        return "already", row
+    outcome, event = _rollback_plan(conn, "sale", sale_id, "sell")
+    if outcome == "blocked":
+        return "blocked", row
+    if event is not None:
+        _apply_reversal(conn, event, kind="cancel",
+                        source_type="sale", source_id=sale_id)
+    row = conn.execute(
+        "UPDATE sales SET cancelled_at = now() WHERE id = %s"
+        " RETURNING *",
+        (sale_id,),
+    ).fetchone()
+    return "ok", row
+
+
 def delete_sale(conn, sale_id):
-    cur = conn.execute("DELETE FROM sales WHERE id = %s", (sale_id,))
-    return cur.rowcount > 0
+    """Delete a sale, rolling its linkage back first when it has
+    one and is not already cancelled. Same outcomes as delete_buy."""
+    row = conn.execute(
+        "SELECT * FROM sales WHERE id = %s", (sale_id,)
+    ).fetchone()
+    if row is None:
+        return "not_found"
+    if row["cancelled_at"] is None:
+        outcome, event = _rollback_plan(conn, "sale", sale_id, "sell")
+        if outcome == "blocked":
+            return "blocked"
+        if event is not None:
+            _apply_reversal(conn, event, kind="delete",
+                            source_type="sale", source_id=sale_id)
+    conn.execute("DELETE FROM sales WHERE id = %s", (sale_id,))
+    return "deleted"
 
 
 def list_candidate_rows(conn):

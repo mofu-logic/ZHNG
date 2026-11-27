@@ -39,8 +39,9 @@
 
 - `stocks`（銘柄マスタ）：code（PK、英数字コード）、name、market（東証・名証など）、industry（業種。Yahoo!ファイナンスの企業情報ページの「業種分類」から取得。変わりにくい情報なので、未取得または約6か月経過した銘柄だけ夜間バッチで取り直す）、industry_fetched_on（業種の最終取得日）
 - `holdings`（保有）：id、code（FK）、account_type（特定/NISA）、avg_price（平均取得単価）、shares、lent_shares（貸株数）、ordered_shares（発注数）、updated_at
-- `buy_lots`（買い履歴）：id、code、name、avg_price、shares、purchase_date（NULL可）、policy（購入時の方針・判断）、trigger_note（購入契機）、note（説明）、status（注文中／一部約定／約定済）
-- `sales`（売り履歴）：id、code、name、buy_price、shares、purchase_date、sell_price、sell_shares、executed_shares（約定株数）、order_start_date、executed_date、profit、status（注文中／一部約定／約定済）、memo
+- `buy_lots`（買い履歴）：id、code、name、avg_price、shares、purchase_date（NULL可）、policy（購入時の方針・判断）、trigger_note（購入契機）、note（説明）、status（注文中／一部約定／約定済）、account_type（口座区分。NULL は保有に連動しない行＝移行前からある履歴）、cancelled_at（取消済みの印。取消しても行は残る）
+- `sales`（売り履歴）：id、code、name、buy_price、shares、purchase_date、sell_price、sell_shares、executed_shares（約定株数）、order_start_date、executed_date、profit、status（注文中／一部約定／約定済）、memo、account_type（買い履歴と同じ）、cancelled_at（同上）
+- `holding_events`（保有イベント）：id、code、account_type、kind（buy／sell／cancel／delete）、source_type（buy_lot／sale）、source_id、delta_shares（符号付き）、shares_before／shares_after、avg_price_before／avg_price_after、lent_shares_before／ordered_shares_before／custody_type_before（保有行が消えるイベントで変更前の貸株数・発注数・保管区分を残し、巻き戻しで丸ごと復元する）、reverses_event_id（打ち消しイベントが指す元イベント）、created_at。口座区分を指定した売買による保有の変更はすべてここに記録され、取消・削除のときはこの記録が示す変更前の状態へ正確に戻す。保有が存在しない状態は shares=0・avg_price=NULL で表す
 - `dividend_benefits`（配当・優待マスタ）：code（PK/FK）、dividend_forecast（1株あたり年間配当予想）、dividend_auto（自動取得値）、benefit_value（優待体感額・年額）、benefit_desc（優待内容）、info_updated_on（記載更新日）、funding_target（売却候補フラグ。表示名は「売却候補」、内部名は従来どおり）、judgment_on（判断日）、judgment_note（判断内容＝検討メモ）、policy（方針。「値上がり／配当／優待」の組み合わせ。従来は買付ロットから都度導出していたが、マスタを正として移行済み。保有株一覧はマスタ値を優先し、未設定の場合だけロット由来の値にフォールバックする）、created_on（登録日。レコードが追加された日で、銘柄コードの下に表示する。既存分はスプレッドシートからの移行日で一括設定済み）
   - 配当予想は自動取得値を唯一の正とし、画面からの編集は行わない。優待・判断メモなど自動で取れない項目だけを手編集する。
 - `benefit_memos`（優待メモ）：code（PK/FK）、shareholder_no（株主番号）、deadline_1／deadline_2（優待チケットの期限。1年有効のチケットを半年ごとに受け取るため、未使用の期限は最大2つ）、delivery_waiting（配達待ち）、status（ステータス）、form_arrival_1／form_arrival_2（申込書到着時期）、item_arrival_1／item_arrival_2（優待品到着時期）。自動取得できない実務メモのため、全項目を手編集する
@@ -122,6 +123,7 @@
 - 技術スタック：Python + FastAPI + Jinja2（サーバ描画、軽量志向）。DBは PostgreSQL。
 - 保有の正は証券会社のスナップショットとする。
 - 売買の約定状態は 注文中／一部約定／約定済 の3種に統一する。
+- 保有はスナップショットを起点に、口座区分を指定した売買履歴の登録・取消・削除に連動して更新される（連動の規則と取消の方式は 13 節）。変更はすべて holding_events に記録する。
 - 保有一覧はスプレッドシート同様にフィルタとソートができること（件数が少ないためクライアント側JSで実装）。
 - 株価バッチは日次実行（開始時刻は設定で変更可能、デフォルト 01:00 JST）＋手動実行。
 - 配当予想は自動取得値のみを正とし、手編集の余地を残さない。
@@ -131,7 +133,7 @@
 - 動作ログは OpenTelemetry の Logs API/SDK を通して記録する（`web/app/observability.py`）。イベントの記録箇所（`emit_event`）は SDK に依存しない形にし、将来 OTLP エクスポータを足すだけで外部連携できるようにする。
 - 出力先は2つ：標準出力へ OTel ログデータモデル形式の JSON（1行1レコード。timestamp／severity_text／severity_number／body／attributes／trace_id／span_id／resource を含む。コンテナログからコレクタで回収する想定）と、画面表示用の DB テーブル `app_logs`。
 - リクエストごとにスパンを作り、ログに trace_id／span_id を含める（スパン自体の外部送信は未実施）。既存の `logging` 呼び出しもブリッジで同じパイプラインに流し、例外は type／message／stacktrace を属性に持つ。
-- 記録するイベント：アプリ起動、取得の開始・銘柄ごとの失敗・完了、売買の追加・削除、マスタ更新、設定更新、HTTP リクエスト（メソッド・パス・ステータス・所要時間）。ヘルスチェックと取得状況ポーリングは量が膨れるため対象外。
+- 記録するイベント：アプリ起動、取得の開始・銘柄ごとの失敗・完了、売買の追加・取消・削除、マスタ更新、設定更新、HTTP リクエスト（メソッド・パス・ステータス・所要時間）。ヘルスチェックと取得状況ポーリングは量が膨れるため対象外。
 - 保持期間は設定タブで変更でき（デフォルト90日、1〜3650日）、起動時と設定保存時に期限切れを削除する。画面は「ログ」タブ（/logs）で、レベルとキーワードで絞り込める。
 - 外部連携：設定で有効化すると OTLP/HTTP エクスポータを動的に接続し、同じログを外部コレクタへ送信する（再起動不要、送信失敗はアプリに影響しない）。
 
@@ -140,7 +142,9 @@
 - 売買履歴・配当優待マスタ・設定の登録／更新／参照は JSON API `/api/v1` に統一する。Web画面もこの API 経由で書き込みを行い、将来の外部連携も同じ IF を使う（画面専用の書き込み経路は作らない）。設定には KPI 項目のほか、ログ保存期間（log_retention_days）と OTel 連携（otel_enabled／otel_endpoint）を含む。
 - 仕様は OpenAPI に準拠する。FastAPI の自動生成で `/openapi.json`（OpenAPI 3.1、API バージョン 1.0.0）が正となる。Swagger UI（/docs）と ReDoc（/redoc）は、設定の「開発者向け＞APIテスト」スイッチが有効な間だけ表示され、無効時は 404 を返す（/openapi.json 自体は連携用の仕様書として常時取得できる）。リクエスト／レスポンスは Pydantic モデル（BuyIn/BuyOut 等）で型と必須項目を定義し、不正な入力は 422、対象なしは 404 を返す。
 - 業務ロジック（約定状態の自動判定、売却損益の自動計算、月あたり所得の自動算出など）は API ハンドラではなく共通のサービス層に置き、どのクライアントからでも同じ導出・同じ動作ログになるようにする。
-- エンドポイント：`GET/POST /api/v1/buys`、`DELETE /api/v1/buys/{id}`、`GET/POST /api/v1/sales`、`DELETE /api/v1/sales/{id}`、`GET /api/v1/dividend-benefits`、`GET/PUT /api/v1/dividend-benefits/{code}`（手編集項目のみ更新可。配当は従来どおり自動取得のみ）、`GET/PUT /api/v1/settings`（月あたり所得は入力に含めず、応答で算出値を返す）、`GET/POST /api/v1/candidates`、`PUT /api/v1/candidates/{code}`（方針・メモ・希望購入価格の更新）、`DELETE /api/v1/candidates/{code}`、`GET /api/v1/benefit-memos`、`PUT /api/v1/benefit-memos/{code}`（優待メモの upsert）。
+- エンドポイント：`GET/POST /api/v1/buys`、`DELETE /api/v1/buys/{id}`、`POST /api/v1/buys/{id}/cancel`、`GET/POST /api/v1/sales`、`DELETE /api/v1/sales/{id}`、`POST /api/v1/sales/{id}/cancel`、`GET /api/v1/dividend-benefits`、`GET/PUT /api/v1/dividend-benefits/{code}`（手編集項目のみ更新可。配当は従来どおり自動取得のみ）、`GET/PUT /api/v1/settings`（月あたり所得は入力に含めず、応答で算出値を返す）、`GET/POST /api/v1/candidates`、`PUT /api/v1/candidates/{code}`（方針・メモ・希望購入価格の更新）、`DELETE /api/v1/candidates/{code}`、`GET /api/v1/benefit-memos`、`PUT /api/v1/benefit-memos/{code}`（優待メモの upsert）。
+- 売買と保有の連動（holding_events テーブル）：買い・売りの登録で口座区分（account_type）を指定すると、その口座の保有に連動する。買いは保存される約定状態が「約定済」のときだけ連動し、保有行が無ければ作り、あれば株数を加算して平均取得単価を加重平均する。売りは約定株数の分だけ保有を減らし（平均取得単価は変えない）、0株で保有行を削除する。保有を超える約定株数や、保有が無い口座への売りは 422 で、売り自体も登録しない。口座区分の無い売買（移行前からある履歴を含む）は連動しない。連動する買いで銘柄マスタに無いコードは、銘柄名が送られているかどうかによらず購入候補と同じく Yahoo から取得して銘柄名・市場つきで登録し、取得できなければ買い自体を登録しない（502）。買い履歴に残る名前は送られた名前のままで、送られていない場合に限り取得した銘柄名が入る。
+- 取消（cancel）：`POST /api/v1/buys/{id}/cancel` と `POST /api/v1/sales/{id}/cancel` は、レコードを残したまま cancelled_at で取消済みにし、連動イベントがあれば打ち消しイベント（kind=cancel、reverses_event_id で元イベントを参照）で保有を変更前の状態へ正確に戻す。打ち消せるのは、その保有に対する最後の未取消イベントのときだけ（後の変更が積み重なっている場合は 409 で、後のものから順に取り消す）。二重取消も 409、対象なしは 404。連動していないレコードの取消は印を付けるだけ。削除（DELETE）も未取消の連動があれば先に同じ条件で巻き戻して（kind=delete）から行を消し、取消済みの削除は保有に触れない。売買履歴画面は行ごとに「反映済み／対象外／取消済み」を表示する。
 - 優待メモ（benefit_memos テーブル）：一覧は配当・優待マスタで優待があり、かつ保有している銘柄だけを返す（メモ未登録の銘柄は項目が空で返り、配達待ちは false）。PUT は銘柄コードをキーにした upsert で部分更新とし、未指定の項目は保持し、明示した null はクリアする。対象は銘柄マスタにあるコードのみ（なければ 404）。表示対象外の銘柄にも保存はできるが、一覧には出ない。
 - 購入候補（candidates テーブル）：登録 POST はその場で Yahoo!ファイナンスから取得し、取得できないコードは登録しない（502）。重複登録は 409。取得した情報は daily_snapshots に保存するが、候補は保有ではないため配当・優待マスタへの自動反映と配当変更の記録は行わない。夜間バッチの取得対象には候補も含める（マスタ反映は保有のみ）。サマリーの騰落数・値動き Top10 も保有銘柄だけを数える。
 - 誤登録防止：コード入力欄は4〜5文字の入力が揃った時点で `GET /api/v1/candidates/preview/{code}`（登録せず取得だけ）で銘柄名と現在値をボタンの右に表示する。重複・削除などのメッセージは共通のモーダルダイアログ（base.html の showDialog）で表示する。
