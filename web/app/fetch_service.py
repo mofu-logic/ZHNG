@@ -326,15 +326,24 @@ async def scheduler(*, db=_default_db, lock):
     ので、開始時刻の変更は再起動なしで反映される。設定時刻を過ぎた
     時刻への変更では即時実行せず、次回発生時刻に実行する。"""
     while True:
-        with db() as conn:
-            start_time = app_config(conn)["fetch_start_time"]
-        now = datetime.now(JST)
-        target = next_run_at(now, start_time)
-        wait_seconds = min((target - now).total_seconds(), 60)
-        await asyncio.sleep(wait_seconds)
-        if datetime.now(JST) < target:
-            continue
         try:
-            await fetch_all("batch", db=db, lock=lock)
+            with db() as conn:
+                start_time = app_config(conn)["fetch_start_time"]
+            now = datetime.now(JST)
+            target = next_run_at(now, start_time)
+            wait_seconds = min((target - now).total_seconds(), 60)
+            await asyncio.sleep(wait_seconds)
+            if datetime.now(JST) < target:
+                continue
+            try:
+                await fetch_all("batch", db=db, lock=lock)
+            except Exception:
+                logger.exception("scheduled fetch failed")
         except Exception:
-            logger.exception("scheduled fetch failed")
+            # 設定の読み直しは最大60秒ごとに行うため、一時的なDB障害で
+            # 例外がループを抜けるとスケジューラが恒常停止してしまう。
+            # 記録してバックオフを挟み、次の反復で回復を待つ。
+            logger.exception(
+                "scheduler iteration failed; retrying in 60 seconds"
+            )
+            await asyncio.sleep(60)
