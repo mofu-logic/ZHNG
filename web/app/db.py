@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS holdings(
   avg_price numeric NOT NULL, shares integer NOT NULL,
   lent_shares integer DEFAULT 0, ordered_shares integer DEFAULT 0,
   updated_at timestamptz DEFAULT now());
+CREATE UNIQUE INDEX IF NOT EXISTS holdings_code_account_uidx
+  ON holdings (code, account_type) WHERE account_type IS NOT NULL;
 CREATE TABLE IF NOT EXISTS buy_lots(
   id serial PRIMARY KEY, code text, name text, avg_price numeric, shares integer,
   purchase_date date, policy text, trigger_note text, note text,

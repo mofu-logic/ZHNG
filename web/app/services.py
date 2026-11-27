@@ -90,13 +90,17 @@ def _linkage_event(conn, source_type, source_id, kind):
 
 
 def _latest_open_event(conn, code, account_type):
-    """The newest buy/sell event for a holding that no reversal has
-    undone yet. Only that event may be rolled back: undoing an older
-    one would silently rewrite the newer changes on top of it."""
+    """The newest event for a holding that still stands: not a
+    reversal itself and not undone by one. Every kind counts --
+    buy/sell linkage, manual add/delete, future imports -- because
+    any later change, whoever made it, sits on top of the earlier
+    ones. Only the trade behind this event may be rolled back:
+    undoing an older one would silently rewrite the newer changes
+    on top of it."""
     return conn.execute(
         "SELECT * FROM holding_events e"
         " WHERE e.code = %s AND e.account_type = %s"
-        " AND e.kind IN ('buy', 'sell')"
+        " AND e.reverses_event_id IS NULL"
         " AND NOT EXISTS (SELECT 1 FROM holding_events r"
         "                 WHERE r.reverses_event_id = e.id)"
         " ORDER BY e.id DESC LIMIT 1",
@@ -382,6 +386,83 @@ def delete_sale(conn, sale_id):
                             source_type="sale", source_id=sale_id)
     conn.execute("DELETE FROM sales WHERE id = %s", (sale_id,))
     return "deleted"
+
+
+def find_holding(conn, code, account_type):
+    """The holding row for (code, account_type), or None."""
+    return _holding_row(conn, code, account_type)
+
+
+def get_holding(conn, holding_id):
+    """One holding row by id, with the stock name joined in."""
+    return conn.execute(
+        "SELECT h.*, s.name AS name FROM holdings h"
+        " JOIN stocks s ON s.code = h.code WHERE h.id = %s",
+        (holding_id,),
+    ).fetchone()
+
+
+def create_holding(conn, *, code, account_type, avg_price, shares,
+                   lent_shares, ordered_shares, custody_type):
+    """Register a holding directly (the cover for initial
+    registration and for trades that left no history) and record
+    the manual add in holding_events: the before state is \"not
+    held\" (0 shares, no average price). The caller has already
+    checked that no holding exists for (code, account_type) and
+    that the stock master knows the code."""
+    row = conn.execute(
+        "INSERT INTO holdings(code, account_type, custody_type,"
+        " avg_price, shares, lent_shares, ordered_shares)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+        (code, account_type, custody_type, avg_price, shares,
+         lent_shares, ordered_shares),
+    ).fetchone()
+    _record_event(
+        conn, code=code, account_type=account_type, kind="add",
+        source_type="manual", source_id=None, delta_shares=shares,
+        before=(0, None), after=(shares, avg_price),
+    )
+    return row
+
+
+def delete_holding(conn, holding_id):
+    """Delete a holding row, recording a manual delete event first
+    (with the row's other columns as before-values, so the ledger
+    keeps the whole row). Returns 'not_found', 'blocked' or
+    'deleted': while the holding's latest unreversed linkage event
+    is a buy/sell event the delete is blocked — the trade side
+    must be cancelled first, otherwise the ledger would lose the
+    thread back to the trade that made the change. A manual add
+    as the latest event does not block: the row's newest change is
+    manual, so deleting it by hand keeps the ledger consistent."""
+    row = conn.execute(
+        "SELECT * FROM holdings WHERE id = %s", (holding_id,)
+    ).fetchone()
+    if row is None:
+        return "not_found"
+    latest = _latest_open_event(conn, row["code"], row["account_type"])
+    if latest is not None and latest["kind"] in ("buy", "sell"):
+        return "blocked"
+    _record_event(
+        conn, code=row["code"], account_type=row["account_type"],
+        kind="delete", source_type="manual", source_id=None,
+        delta_shares=-row["shares"],
+        before=(row["shares"], row["avg_price"]), after=(0, None),
+        row_before=_row_extras(row),
+    )
+    conn.execute("DELETE FROM holdings WHERE id = %s", (holding_id,))
+    return "deleted"
+
+
+def list_holding_events(conn, code, account_type):
+    """The holding's events, newest first. Events belong to the
+    (code, account_type) pair, not to a row id: a holding deleted
+    and re-registered keeps its history under the same key."""
+    return conn.execute(
+        "SELECT * FROM holding_events"
+        " WHERE code = %s AND account_type = %s ORDER BY id DESC",
+        (code, account_type),
+    ).fetchall()
 
 
 def list_candidate_rows(conn):

@@ -34,6 +34,10 @@
   </label>
 </div>
 
+<div style="margin: 4px 0 10px">
+  <button type="button" id="holding-add-open">追加</button>
+</div>
+
 <div class="tblwrap">
 <table id="holdings">
   <thead>
@@ -55,6 +59,7 @@
       <th class="sortable" data-type="str">方針</th>
       <th class="sortable" data-type="str">購入日</th>
       <th>判断メモ</th>
+      <th></th>
     </tr>
   </thead>
   <tbody>
@@ -77,10 +82,35 @@
       <td class="nowrap">{{ i.policy or '' }}</td>
       <td class="date">{{ i.purchase_date or '' }}</td>
       <td class="memo">{{ i.judgment_note or '' }}</td>
+      <td class="nowrap"><button type="button" class="delbtn" style="color:#20304d" data-holding-history="{{ i.id }}" data-name="{{ i.name }}">履歴</button> <button type="button" class="delbtn" data-holding-delete="{{ i.id }}" data-name="{{ i.name }}" data-account="{{ i.account_type or '' }}">削除</button></td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
+</div>
+
+<div class="dlg-overlay" id="holding-add-overlay" style="display:none">
+  <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="holding-add-title">
+    <div class="dlg-title" id="holding-add-title">保有の追加</div>
+    <form class="addform" id="holding-add-form" style="display:grid; gap:10px">
+      <label>銘柄コード <input type="text" name="code" required></label>
+      <label>口座区分
+        <select name="account_type">
+          <option value="特定">特定</option>
+          <option value="NISA">NISA</option>
+        </select>
+      </label>
+      <label>平均取得単価 <input type="number" name="avg_price" step="any" min="0" required></label>
+      <label>株数 <input type="number" name="shares" min="0" required></label>
+      <label>貸株数 <input type="number" name="lent_shares" min="0" value="0"></label>
+      <label>発注数 <input type="number" name="ordered_shares" min="0" value="0"></label>
+      <label>保管区分 <input type="text" name="custody_type"></label>
+    </form>
+    <div class="dlg-btns">
+      <button type="button" class="dlg-cancel" id="holding-add-cancel">キャンセル</button>
+      <button type="button" id="holding-add-save">追加</button>
+    </div>
+  </div>
 </div>
 <script>
   const tbody = document.querySelector('#holdings tbody');
@@ -140,5 +170,145 @@
   }
   [fq, fp, fa, fn, fy, fymax, fyt].forEach(el => el.addEventListener('input', applyFilter));
   applyFilter();
+</script>
+<script>
+  // Manual holding registration / deletion / event history.
+  // Writes go through the JSON API (/api/v1), same as external clients.
+  const addOverlay = document.getElementById('holding-add-overlay');
+  const addForm = document.getElementById('holding-add-form');
+  const openAdd = () => {
+    addOverlay.style.display = 'flex';
+    requestAnimationFrame(() => addOverlay.classList.add('show'));
+  };
+  const closeAdd = () => {
+    addOverlay.classList.remove('show');
+    setTimeout(() => { addOverlay.style.display = 'none'; }, 150);
+  };
+  document.getElementById('holding-add-open').addEventListener('click', openAdd);
+  document.getElementById('holding-add-cancel').addEventListener('click', closeAdd);
+  addOverlay.addEventListener('click', (e) => { if (e.target === addOverlay) closeAdd(); });
+  document.getElementById('holding-add-save').addEventListener('click', async () => {
+    const fd = new FormData(addForm);
+    const values = {
+      code: (fd.get('code') || '').trim(),
+      account_type: fd.get('account_type'),
+      avg_price: numOrNull(fd.get('avg_price')),
+      shares: intOrNull(fd.get('shares')),
+      lent_shares: intOrNull(fd.get('lent_shares')) || 0,
+      ordered_shares: intOrNull(fd.get('ordered_shares')) || 0,
+      custody_type: strOrNull(fd.get('custody_type')),
+    };
+    const r = await fetch('/api/v1/holdings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(values),
+    });
+    if (r.ok) { location.reload(); return; }
+    const d = await r.json().catch(() => ({}));
+    await showDialog({
+      title: '追加できませんでした',
+      message: d.detail || ('エラーが発生しました（' + r.status + '）'),
+    });
+  });
+
+  document.querySelectorAll('[data-holding-delete]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ok = await showDialog({
+        title: '保有の削除',
+        message: btn.dataset.name + '（' + btn.dataset.account + '）の保有を削除しますか？',
+        okText: '削除', cancelText: 'キャンセル', danger: true,
+      });
+      if (!ok) return;
+      const r = await fetch('/api/v1/holdings/' + btn.dataset.holdingDelete, {method: 'DELETE'});
+      if (r.ok) { location.reload(); return; }
+      const d = await r.json().catch(() => ({}));
+      await showDialog({
+        title: '削除できませんでした',
+        message: d.detail || ('エラーが発生しました（' + r.status + '）'),
+      });
+    });
+  });
+
+  const KIND_LABEL = {buy: '買い連動', sell: '売り連動', cancel: '取消', delete: '削除', add: '手動追加'};
+  const SOURCE_LABEL = {buy_lot: '買い履歴', sale: '売り履歴', manual: '手動'};
+  function fmtPrice(v) { return v == null ? '―' : Number(v).toLocaleString('ja-JP'); }
+  function openHoldingHistory(id, name) {
+    return new Promise(async resolve => {
+      const r = await fetch('/api/v1/holdings/' + id + '/events');
+      if (!r.ok) {
+        await showDialog({
+          title: '履歴を表示できませんでした',
+          message: 'エラーが発生しました（' + r.status + '）',
+        });
+        resolve();
+        return;
+      }
+      const events = await r.json();
+      const overlay = document.createElement('div');
+      overlay.className = 'dlg-overlay';
+      const dlg = document.createElement('div');
+      dlg.className = 'dlg';
+      dlg.style.maxWidth = '640px';
+      dlg.setAttribute('role', 'dialog');
+      dlg.setAttribute('aria-modal', 'true');
+      const t = document.createElement('div');
+      t.className = 'dlg-title';
+      t.textContent = name + ' の保有イベント履歴';
+      const body = document.createElement('div');
+      if (!events.length) {
+        body.className = 'dlg-msg';
+        body.textContent = '記録されたイベントはありません。';
+      } else {
+        const table = document.createElement('table');
+        const thead = document.createElement('thead');
+        const htr = document.createElement('tr');
+        ['日時', '種別', '発生源', '株数', '平均取得単価'].forEach(h => {
+          const th = document.createElement('th');
+          th.textContent = h;
+          htr.appendChild(th);
+        });
+        thead.appendChild(htr);
+        const tb = document.createElement('tbody');
+        events.forEach(ev => {
+          const tr = document.createElement('tr');
+          const cells = [
+            new Date(ev.created_at).toLocaleString('ja-JP'),
+            (KIND_LABEL[ev.kind] || ev.kind) + (ev.reverses_event_id && ev.kind !== 'cancel' ? '（巻き戻し）' : ''),
+            SOURCE_LABEL[ev.source_type] || ev.source_type,
+            ev.shares_before + ' → ' + ev.shares_after + '（' + (ev.delta_shares > 0 ? '+' : '') + ev.delta_shares + '）',
+            fmtPrice(ev.avg_price_before) + ' → ' + fmtPrice(ev.avg_price_after),
+          ];
+          cells.forEach(c => {
+            const td = document.createElement('td');
+            td.textContent = c;
+            tr.appendChild(td);
+          });
+          tb.appendChild(tr);
+        });
+        table.append(thead, tb);
+        body.appendChild(table);
+      }
+      const btns = document.createElement('div');
+      btns.className = 'dlg-btns';
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.textContent = '閉じる';
+      const close = () => {
+        overlay.classList.remove('show');
+        setTimeout(() => overlay.remove(), 150);
+        resolve();
+      };
+      closeBtn.addEventListener('click', close);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+      btns.appendChild(closeBtn);
+      dlg.append(t, body, btns);
+      overlay.appendChild(dlg);
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('show'));
+    });
+  }
+  document.querySelectorAll('[data-holding-history]').forEach(btn => {
+    btn.addEventListener('click', () => openHoldingHistory(btn.dataset.holdingHistory, btn.dataset.name));
+  });
 </script>
 {% endblock %}
