@@ -295,3 +295,12 @@ def test_candidate_page_editor_and_sorting(client, db):
     # Sortable columns and the shortened dividend header.
     assert 'class="sortable num" data-type="num">配当利回り' in page
     assert "1株配当" in page
+
+
+def test_candidate_page_date_cell_uses_nowrap_class(client, db, monkeypatch):
+    monkeypatch.setattr(main.httpx, "AsyncClient", make_fake_client())
+    body = client.post("/api/v1/candidates", json={"code": "7777"}).json()
+    page = client.get("/candidates").text
+    # The snapshot date cell carries the .date (white-space: nowrap)
+    # class so the date never wraps onto two lines.
+    assert '<td class="date">%s</td>' % body["snap_date"] in page

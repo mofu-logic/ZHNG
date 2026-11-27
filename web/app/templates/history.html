@@ -32,7 +32,7 @@
   <tbody>
   {% for b in buys %}
     <tr>
-      <td>{{ b.purchase_date or '―' }}</td>
+      <td class="date">{{ b.purchase_date or '―' }}</td>
       <td class="code">{{ b.code or '' }}</td>
       <td><span class="name">{{ b.name or '' }}</span></td>
       <td class="num">{{ b.avg_price|price }}</td>
@@ -87,8 +87,8 @@
   <tbody>
   {% for s in sales %}
     <tr>
-      <td>{{ s.order_start_date or '―' }}</td>
-      <td>{{ s.executed_date or '―' }}</td>
+      <td class="date">{{ s.order_start_date or '―' }}</td>
+      <td class="date">{{ s.executed_date or '―' }}</td>
       <td class="code">{{ s.code or '' }}</td>
       <td><span class="name">{{ s.name or '' }}</span></td>
       <td class="num">{{ s.sell_price|price }}</td>

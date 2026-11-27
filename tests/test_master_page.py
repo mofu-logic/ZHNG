@@ -88,3 +88,19 @@ def test_master_created_on_and_help_tip(client, db):
     assert "優待と判断メモは自身で更新が必要です" in page
     body = client.get("/api/v1/dividend-benefits/9999").json()
     assert body["created_on"] is not None
+
+
+def test_master_page_date_cells_use_nowrap_class(client, db):
+    seed_stock_holding(db)
+    db.execute(
+        "UPDATE dividend_benefits SET judgment_on='2026-03-15',"
+        " created_on='2026-01-20' WHERE code='9999'"
+    )
+    db.commit()
+    page = client.get("/master").text
+    # The judgment date and the registration date in the code cell carry
+    # the .date (white-space: nowrap) class so a date never wraps onto
+    # two lines.
+    assert '<td class="date">2026-03-15</td>' in page
+    assert '<td class="code date">9999<br>' in page
+    assert "登録 2026-01-20" in page
