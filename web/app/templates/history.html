@@ -187,7 +187,7 @@
         okText: '取り消す', cancelText: 'キャンセル', danger: true,
       });
       if (!ok) return;
-      await apiJson('POST', '/api/v1/' + btn.dataset.cancel + '/' + btn.dataset.id + '/cancel');
+      await apiJson('POST', '/api/v1/' + btn.dataset.cancel + '/' + btn.dataset.id + '/cancel', undefined, '取り消しできませんでした');
       if (btn.dataset.cancel === 'sales') location.hash = 'sell';
       location.reload();
     });
@@ -196,7 +196,7 @@
     btn.addEventListener('click', async () => {
       const label = btn.dataset.del === 'buys' ? '購入' : '売却';
       if (!confirm('この' + label + '履歴を削除しますか？')) return;
-      await apiJson('DELETE', '/api/v1/' + btn.dataset.del + '/' + btn.dataset.id);
+      await apiJson('DELETE', '/api/v1/' + btn.dataset.del + '/' + btn.dataset.id, undefined, '削除できませんでした');
       if (btn.dataset.del === 'sales') location.hash = 'sell';
       location.reload();
     });
