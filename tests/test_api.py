@@ -233,7 +233,12 @@ def test_sale_empty_or_blank_code_rejected(client, db, code):
 def test_buy_code_with_surrounding_spaces_is_trimmed(client, db):
     # R3-1: a padded code is normalized to the bare code, not rejected
     # or stored with the spaces (same trimming the screen already does).
-    r = client.post("/api/v1/buys", json={"code": " 9999 "})
+    # The name is sent explicitly so the test stays about trimming:
+    # an omitted name is now resolved from the stock master (or
+    # fetched), which is covered by test_history_form_simplify.py.
+    r = client.post(
+        "/api/v1/buys", json={"code": " 9999 ", "name": "テスト銘柄"}
+    )
     assert r.status_code == 201
     assert db.execute(
         "SELECT code FROM buy_lots").fetchone()["code"] == "9999"
@@ -276,8 +281,13 @@ def test_buy_unfilled_order_without_price_or_shares(client, db):
 
 def test_buy_zero_price_and_shares_accepted(client, db):
     # Guard: the bound is ge=0, not gt=0, so zero stays acceptable.
+    # The name is sent explicitly so the test stays about the zero
+    # bound: an omitted name is now resolved from the stock master
+    # (or fetched), which is covered by test_history_form_simplify.py.
     r = client.post(
-        "/api/v1/buys", json={"code": "9999", "avg_price": 0, "shares": 0}
+        "/api/v1/buys",
+        json={"code": "9999", "name": "テスト銘柄",
+              "avg_price": 0, "shares": 0},
     )
     assert r.status_code == 201
 
