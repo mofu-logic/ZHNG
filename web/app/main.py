@@ -539,7 +539,10 @@ def history(request: Request):
                 r["link_state"] = "反映済み"
             else:
                 r["link_state"] = "対象外"
-    return templates.TemplateResponse(request, "history.html", dict(buys=buys, sales=sales))
+    return templates.TemplateResponse(
+        request, "history.html",
+        dict(buys=buys, sales=sales, account_types=ACCOUNT_TYPES),
+    )
 
 
 @app.get("/master", response_class=HTMLResponse)
