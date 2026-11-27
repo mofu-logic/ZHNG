@@ -16,16 +16,15 @@ import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from typing import Annotated
-from zoneinfo import ZoneInfo
 
 import httpx
-import psycopg
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from psycopg.rows import dict_row
 from pydantic import BaseModel, Field, StringConstraints
 
+from app.config import DATABASE_URL, JST, TRADE_STATUSES
+from app.db import SCHEMA, db, initialize_database
 from app.formatting import (
     fnum,
     fmt_pct,
@@ -52,11 +51,12 @@ from app.yahoo import (
     suffix_for_market,
 )
 
-# formatting.py / yahoo.py へ移した関数のうち、main.py 内のコードでは
-# 直接使わないものもテスト（tests/test_format.py など）が app.main 経由で
+# formatting.py / yahoo.py / config.py / db.py へ移したもののうち、
+# main.py 内のコードでは直接使わないものもテストが app.main 経由で
 # import しているため、ここで再エクスポートする。__all__ に載せることで
 # 未使用 import として lint に指摘されないようにする。
 __all__ = [
+    "SCHEMA",
     "fmt_pct",
     "fmt_pct_signed",
     "fmt_pct_value",
@@ -64,8 +64,6 @@ __all__ = [
     "fmt_signed",
     "fmt_yen",
 ]
-
-DATABASE_URL = os.environ["DATABASE_URL"]
 
 tracer = setup_observability(DATABASE_URL)
 
@@ -77,71 +75,6 @@ if not logger.handlers:
     logger.addHandler(OtelBridgeHandler())
     logger.setLevel(logging.INFO)
     logger.propagate = False
-JST = ZoneInfo("Asia/Tokyo")
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS stocks(
-  code text PRIMARY KEY, name text NOT NULL, market text);
-CREATE TABLE IF NOT EXISTS holdings(
-  id serial PRIMARY KEY, code text NOT NULL, account_type text, custody_type text,
-  avg_price numeric NOT NULL, shares integer NOT NULL,
-  lent_shares integer DEFAULT 0, ordered_shares integer DEFAULT 0,
-  updated_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS buy_lots(
-  id serial PRIMARY KEY, code text, name text, avg_price numeric, shares integer,
-  purchase_date date, policy text, trigger_note text, note text,
-  status text DEFAULT '約定済');
-CREATE TABLE IF NOT EXISTS sales(
-  id serial PRIMARY KEY, code text, name text, buy_price numeric, shares integer,
-  purchase_date date, sell_price numeric, sell_shares integer,
-  executed_shares integer DEFAULT 0, order_start_date date, executed_date date,
-  profit numeric, status text DEFAULT '注文中', memo text);
-CREATE TABLE IF NOT EXISTS dividend_benefits(
-  code text PRIMARY KEY, dividend_forecast numeric, dividend_auto numeric,
-  benefit_value numeric, benefit_desc text, info_updated_on date,
-  funding_target boolean, judgment_on date, judgment_note text);
-CREATE TABLE IF NOT EXISTS price_points(
-  id serial PRIMARY KEY, code text NOT NULL, captured_at timestamptz NOT NULL,
-  price numeric NOT NULL, prev_close numeric, day_high numeric, day_low numeric,
-  volume bigint, source text);
-CREATE TABLE IF NOT EXISTS settings(key text PRIMARY KEY, value text);
-CREATE TABLE IF NOT EXISTS fetch_runs(
-  id serial PRIMARY KEY, started_at timestamptz, finished_at timestamptz,
-  ok_count integer, ng_count integer, note text);
-ALTER TABLE fetch_runs ADD COLUMN IF NOT EXISTS total_count integer;
-ALTER TABLE fetch_runs ADD COLUMN IF NOT EXISTS done_count integer DEFAULT 0;
-CREATE TABLE IF NOT EXISTS dividend_changes(
-  id serial PRIMARY KEY, run_id integer, code text NOT NULL,
-  old_div numeric, new_div numeric, changed_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS daily_snapshots(
-  code text NOT NULL, snap_date date NOT NULL,
-  close_price numeric, prev_close numeric, open_price numeric,
-  day_high numeric, day_low numeric, volume bigint,
-  market_cap_m numeric, dividend_forecast numeric, dividend_yield numeric,
-  per numeric, pbr numeric,
-  captured_at timestamptz, source text,
-  PRIMARY KEY (code, snap_date));
-CREATE TABLE IF NOT EXISTS app_logs(
-  id serial PRIMARY KEY, ts timestamptz NOT NULL, severity text,
-  severity_number integer, body text, attributes jsonb,
-  trace_id text, span_id text);
-CREATE INDEX IF NOT EXISTS app_logs_ts_idx ON app_logs(ts DESC);
-CREATE TABLE IF NOT EXISTS candidates(
-  code text PRIMARY KEY, added_at timestamptz NOT NULL DEFAULT now());
-ALTER TABLE candidates ADD COLUMN IF NOT EXISTS policy text;
-ALTER TABLE candidates ADD COLUMN IF NOT EXISTS memo text;
-ALTER TABLE candidates ADD COLUMN IF NOT EXISTS target_price numeric;
-ALTER TABLE dividend_benefits ADD COLUMN IF NOT EXISTS policy text;
-ALTER TABLE dividend_benefits ADD COLUMN IF NOT EXISTS created_on date DEFAULT CURRENT_DATE;
-ALTER TABLE stocks ADD COLUMN IF NOT EXISTS industry text;
-ALTER TABLE stocks ADD COLUMN IF NOT EXISTS industry_fetched_on date;
-"""
-
-
-def db():
-    return psycopg.connect(
-        DATABASE_URL, row_factory=dict_row, options="-c timezone=Asia/Tokyo"
-    )
 
 
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -442,60 +375,9 @@ async def scheduler():
 @asynccontextmanager
 async def lifespan(app):
     with db() as conn:
-        conn.execute(SCHEMA)
-        # One-time migration: the per-stock policy used to be derived
-        # from the buy lots on every read; it now lives on the dividend
-        # master, where it is edited. Seed it once from the latest lot
-        # (verified to match the derived value for every held code).
-        # One-time backfill: every master row present at this point
-        # came in with the initial spreadsheet import (2026-11-25);
-        # rows created later get created_on from the column default.
-        cflag = conn.execute(
-            "SELECT value FROM settings"
-            " WHERE key = 'master_created_on_backfilled'"
-        ).fetchone()
-        if cflag is None:
-            conn.execute(
-                "UPDATE dividend_benefits SET created_on = DATE '2026-11-25'"
-            )
-            conn.execute(
-                "INSERT INTO settings(key, value)"
-                " VALUES ('master_created_on_backfilled', '1')"
-                " ON CONFLICT(key) DO NOTHING"
-            )
-            conn.commit()
-        flag = conn.execute(
-            "SELECT value FROM settings"
-            " WHERE key = 'policy_master_migrated'"
-        ).fetchone()
-        if flag is None:
-            conn.execute(
-                "UPDATE dividend_benefits m SET policy = ("
-                " SELECT b.policy FROM buy_lots b WHERE b.code = m.code"
-                "  AND b.policy IS NOT NULL AND b.policy <> ''"
-                "  ORDER BY b.purchase_date DESC NULLS LAST, b.id DESC"
-                "  LIMIT 1)"
-                " WHERE m.policy IS NULL"
-            )
-            conn.execute(
-                "INSERT INTO settings(key, value)"
-                " VALUES ('policy_master_migrated', '1')"
-                " ON CONFLICT(key) DO NOTHING"
-            )
-            conn.commit()
-        # No fetch can be running right after process start, so any run
-        # still marked unfinished is stale (interrupted by a restart, or
-        # its completion update was lost). Close it so the history never
-        # shows a run as 'running' forever.
-        cur = conn.execute(
-            "UPDATE fetch_runs SET finished_at=now(),"
-            " note = CASE WHEN note LIKE '%interrupted%' THEN note"
-            " ELSE note || ' / interrupted (closed at startup)' END"
-            " WHERE finished_at IS NULL"
-        )
-        conn.commit()
-        if cur.rowcount:
-            logger.warning("closed %s stale fetch run(s) at startup", cur.rowcount)
+        stale_runs = initialize_database(conn)
+        if stale_runs:
+            logger.warning("closed %s stale fetch run(s) at startup", stale_runs)
         # Operation logs are kept for the configured retention period,
         # and the OTel integration follows the stored settings.
         config = app_config(conn)
@@ -857,7 +739,6 @@ def _upsert_stock(conn, code, name):
 # settings lives here, shared by the JSON API (/api/v1) and anything
 # else that needs it. Derivations (trade status, sale profit, monthly
 # income target) exist exactly once, in this layer.
-TRADE_STATUSES = ("注文中", "一部約定", "約定済")
 
 
 def create_buy(conn, *, code, name, avg_price, shares, purchase_date,
