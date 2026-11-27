@@ -9,6 +9,8 @@ from datetime import date, datetime, timezone
 
 import pytest
 
+from zoneinfo import ZoneInfo
+
 from conftest import seed_settings, seed_stock_holding
 
 
@@ -134,6 +136,27 @@ def test_history_page_renders(client, db):
     r = client.get("/history")
     assert r.status_code == 200
     assert "テスト銘柄" in r.text
+
+
+def test_history_page_date_cells_use_nowrap_class(client, db):
+    seed_stock_holding(db, dividend=None, price=None)
+    client.post(
+        "/api/v1/buys",
+        json={"code": "9999", "name": "テスト銘柄",
+              "purchase_date": "2026-01-05"},
+    )
+    client.post(
+        "/api/v1/sales",
+        json={"code": "9999", "name": "テスト銘柄",
+              "order_start_date": "2026-02-01",
+              "executed_date": "2026-02-03"},
+    )
+    page = client.get("/history").text
+    # Every date cell carries the .date (white-space: nowrap) class so a
+    # date never wraps onto two lines.
+    assert '<td class="date">2026-01-05</td>' in page
+    assert '<td class="date">2026-02-01</td>' in page
+    assert '<td class="date">2026-02-03</td>' in page
 
 
 def test_settings_monthly_target_is_derived(client, db):
@@ -304,6 +327,34 @@ def test_data_page_run_results(client, db):
     assert "成功 63件 ／ 失敗 0件" in r.text
     assert "中断" in r.text
     assert "自動取得" in r.text
+
+
+def test_data_page_date_cells_use_nowrap_class(client, db):
+    db.execute(
+        "INSERT INTO stocks(code, name, market)"
+        " VALUES ('9999', 'テスト銘柄', '東証')"
+    )
+    db.execute(
+        "INSERT INTO price_points(code, captured_at, price, source)"
+        " VALUES ('9999', '2026-11-25 09:30:00+09', 1000, 'test')"
+    )
+    db.execute(
+        "INSERT INTO daily_snapshots(code, snap_date, close_price)"
+        " VALUES ('9999', '2026-11-25', 1000)"
+    )
+    db.commit()
+    page = client.get("/data").text
+    # The snapshot date and the latest-price timestamp carry the .date
+    # (white-space: nowrap) class so they never wrap onto two lines.
+    assert '<td class="date">2026-11-25</td>' in page
+    captured = db.execute(
+        "SELECT captured_at FROM price_points WHERE code='9999'"
+    ).fetchone()["captured_at"]
+    # The app reads timestamps back in JST (its session timezone).
+    expected = captured.astimezone(ZoneInfo("Asia/Tokyo")).strftime(
+        "%Y/%m/%d %H:%M"
+    )
+    assert '<td class="date">%s</td>' % expected in page
 
 
 def test_fetch_status_api(client, db):
