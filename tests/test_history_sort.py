@@ -1,21 +1,24 @@
 """History screen: both trade tables get the shared column sorting.
 
 Column sorting is the standard table behaviour in this app (holdings,
-candidates, benefit memos, master): a client-side sort wired per
-table in the template. Data headers carry class="sortable" and a
-data-type of "str" or "num"; numeric cells carry the raw value in
-data-v, which the sort compares instead of the formatted text (so
-"10,000" and "9,000" order by value, not by string); the trailing
-operation column (cancel / delete buttons) is not sortable. The
-server-side default order (newest first) is unchanged -- sorting is
-something the reader applies on top of it.
+candidates, benefit memos, master): a client-side sort whose wiring
+lives once in the shared script in base.html, which wires every
+sortable header in the page against its own table. Data headers
+carry class="sortable" and a data-type of "str" or "num"; numeric
+cells carry the raw value in data-v, which the sort compares instead
+of the formatted text (so "10,000" and "9,000" order by value, not
+by string); the trailing operation column (cancel / delete buttons)
+is not sortable. The server-side default order (newest first) is
+unchanged -- sorting is something the reader applies on top of it.
 
-These tests fix that spec for the buy and sell tables on /history.
-The wiring form (a table id plus a per-table
-querySelectorAll('#<id> th.sortable')) follows the existing tables,
-as does the per-column str/num split: dates and text sort as
-strings, money and share counts sort as numbers. The memo columns
-sort as strings, like the candidate and master memos.
+These tests fix that spec for the buy and sell tables on /history:
+the header structure and data-v cells below, plus the shared wiring
+form (a generic querySelectorAll('th.sortable') served from
+base.html, no per-table '#buys' / '#sales' selectors, and the sort
+logic present exactly once). The per-column str/num split follows
+the other tables: dates and text sort as strings, money and share
+counts sort as numbers. The memo columns sort as strings, like the
+candidate and master memos.
 """
 from html.parser import HTMLParser
 
@@ -177,11 +180,15 @@ def test_sell_table_headers_are_sortable(client, db):
 
 def test_history_tables_sort_wiring(client, db):
     page = client.get("/history").text
-    # Same per-table wiring form as the existing sortable tables:
-    # each table's sortable headers get a click handler that toggles
-    # the direction kept on the header itself.
-    assert "querySelectorAll('#buys th.sortable')" in page
-    assert "querySelectorAll('#sales th.sortable')" in page
+    # The wiring is the shared one from base.html: a generic pass
+    # over every sortable header in the page, not a per-table block
+    # copied into this template.
+    assert "querySelectorAll('th.sortable')" in page
+    assert "querySelectorAll('#buys th.sortable')" not in page
+    assert "querySelectorAll('#sales th.sortable')" not in page
+    # The sort logic arrives exactly once (from base), and keeps the
+    # direction on the header itself.
+    assert page.count("dataset.dir === 'asc'") == 1
     assert "dataset.dir" in page
 
 
