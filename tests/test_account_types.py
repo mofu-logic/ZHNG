@@ -214,15 +214,32 @@ def test_sale_outside_allowlist_is_422_and_registers_nothing(client, db):
     # The holding is seeded under an allowlisted account （特定）.
     # Seeding it under the outside value itself is impossible once
     # the holdings CHECK constraint exists (see the DB constraint
-    # tests below), and it is not needed here: the API validates
-    # the request's account type against the allowlist before any
-    # linkage check runs, so the 422 still comes from the
-    # allowlist, not from a missing holding.
+    # tests below). This test pins the overall outcome (422,
+    # nothing registered, the holding untouched), but on its own
+    # it cannot tell the allowlist validation apart from the
+    # linkage refusal: a sale naming an account whose holding does
+    # not cover the executed shares is refused with the same 422
+    # either way. The executed_shares=0 test below carries the
+    # discrimination between the two.
     _seed_holding(db, account_type="特定")
     r = _sale(client, account_type="新NISA")
     assert r.status_code == 422
     assert _count(db, "sales") == 0
     assert _holding(db, account_type="特定")["shares"] == 100
+    assert _events(db) == []
+
+
+def test_sale_outside_allowlist_zero_executed_is_422(client, db):
+    # Discriminating case for the SaleIn allowlist validator
+    # itself: with executed_shares=0 the sale never links, so the
+    # linkage refusal — the other 422 a sale can get — cannot
+    # fire here. Without the validator nothing in the request
+    # path refuses this sale, so the 422 is pinned to the
+    # allowlist validation alone.
+    _seed_stock(db)
+    r = _sale(client, account_type="新NISA", executed_shares=0)
+    assert r.status_code == 422
+    assert _count(db, "sales") == 0
     assert _events(db) == []
 
 
