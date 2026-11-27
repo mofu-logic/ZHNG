@@ -557,7 +557,7 @@ def parse_import_row(cells):
     account = (cells.get("account_type") or "").strip() or "特定"
     if account not in ACCOUNT_TYPES:
         raise ImportRowError(
-            "口座区分が不正です（"
+            "口座が不正です（"
             + "・".join(ACCOUNT_TYPES)
             + f"のいずれか）: {account}"
         )

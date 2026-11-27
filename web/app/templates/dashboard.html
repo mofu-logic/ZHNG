@@ -95,7 +95,7 @@
     <div class="dlg-title" id="holding-add-title">保有の追加</div>
     <form class="addform" id="holding-add-form" style="display:grid; gap:10px">
       <label>銘柄コード <input type="text" name="code" required></label>
-      <label>口座区分
+      <label>口座
         <select name="account_type">
           {% for a in account_types %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
         </select>
@@ -117,7 +117,7 @@
       <label>CSVファイル <input type="file" name="file" accept=".csv,text/csv" required></label>
       <div class="sub">各項目に対応する列を、ヘッダ名（例：コード）または列番号（1から）で指定します。ヘッダ名を使う項目がある場合は、先頭行をヘッダ行として扱います。</div>
       <label>銘柄コードの列 <input type="text" name="code_col" required placeholder="コード"></label>
-      <label>口座区分の列 <input type="text" name="account_type_col" placeholder="口座"></label>
+      <label>口座の列 <input type="text" name="account_type_col" placeholder="口座"></label>
       <label>平均取得単価の列 <input type="text" name="avg_price_col" placeholder="平均取得単価"></label>
       <label>株数の列 <input type="text" name="shares_col" placeholder="株数"></label>
       <label>既存の保有と重なった行

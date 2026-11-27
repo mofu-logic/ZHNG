@@ -337,7 +337,7 @@ def dashboard(request: Request):
         target_y_value=st.get("target_yield_portfolio", 0.04),
     )
     policies = sorted({i["policy"] for i in items if i["policy"]})
-    accounts = sorted({i["account_type"] for i in items if i["account_type"]})
+    accounts = list(ACCOUNT_TYPES)
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -520,24 +520,6 @@ def history(request: Request):
         sales = conn.execute(
             "SELECT * FROM sales ORDER BY order_start_date DESC NULLS LAST, id DESC"
         ).fetchall()
-        linked = {
-            (e["source_type"], e["source_id"])
-            for e in conn.execute(
-                "SELECT source_type, source_id FROM holding_events"
-                " WHERE kind IN ('buy', 'sell')"
-            ).fetchall()
-        }
-    # Row state for the history screen: a cancelled trade stays
-    # visible as 取消済み, a trade with a linkage event is 反映済み,
-    # and anything else never touched holdings （対象外）.
-    for rows, source_type in ((buys, "buy_lot"), (sales, "sale")):
-        for r in rows:
-            if r["cancelled_at"] is not None:
-                r["link_state"] = "取消済み"
-            elif (source_type, r["id"]) in linked:
-                r["link_state"] = "反映済み"
-            else:
-                r["link_state"] = "対象外"
     return templates.TemplateResponse(
         request, "history.html",
         dict(buys=buys, sales=sales, account_types=ACCOUNT_TYPES),
@@ -671,7 +653,7 @@ def _validate_account_type(v):
     """
     if v is not None and v not in ACCOUNT_TYPES:
         raise ValueError(
-            "口座区分は" + "・".join(ACCOUNT_TYPES)
+            "口座は" + "・".join(ACCOUNT_TYPES)
             + "のいずれかを指定してください"
         )
     return v
