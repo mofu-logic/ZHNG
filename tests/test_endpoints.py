@@ -200,6 +200,73 @@ def test_master_update(client, db):
     assert r.status_code == 404
 
 
+def test_master_partial_update_keeps_unspecified_fields(client, db):
+    seed_stock_holding(db)
+    # Full send first, as the UI does today.
+    r = client.put(
+        "/api/v1/dividend-benefits/9999",
+        json={
+            "benefit_value": 5000,
+            "benefit_desc": "食事券",
+            "judgment_on": "2026-11-26",
+            "judgment_note": "継続保有",
+            "funding_target": True,
+            "policy": "配当・優待",
+        },
+    )
+    assert r.status_code == 200
+    # Sending only one field must keep the rest (partial update).
+    r = client.put(
+        "/api/v1/dividend-benefits/9999", json={"benefit_value": 6000}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["benefit_value"] == 6000.0
+    assert body["benefit_desc"] == "食事券"
+    assert body["judgment_on"] == "2026-11-26"
+    assert body["judgment_note"] == "継続保有"
+    assert body["funding_target"] is True
+    assert body["policy"] == "配当・優待"
+    row = db.execute(
+        "SELECT * FROM dividend_benefits WHERE code = '9999'"
+    ).fetchone()
+    assert float(row["benefit_value"]) == 6000.0
+    assert row["policy"] == "配当・優待"
+    assert row["judgment_note"] == "継続保有"
+
+
+def test_master_explicit_null_clears_only_that_field(client, db):
+    seed_stock_holding(db)
+    client.put(
+        "/api/v1/dividend-benefits/9999",
+        json={
+            "benefit_value": 5000,
+            "benefit_desc": "食事券",
+            "judgment_on": "2026-11-26",
+            "judgment_note": "継続保有",
+            "funding_target": True,
+            "policy": "配当・優待",
+        },
+    )
+    # An explicit null clears that field, and only that field.
+    r = client.put(
+        "/api/v1/dividend-benefits/9999", json={"policy": None}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["policy"] is None
+    assert body["benefit_value"] == 5000.0
+    assert body["benefit_desc"] == "食事券"
+    assert body["judgment_note"] == "継続保有"
+    assert body["funding_target"] is True
+    row = db.execute(
+        "SELECT policy, judgment_note FROM dividend_benefits"
+        " WHERE code = '9999'"
+    ).fetchone()
+    assert row["policy"] is None
+    assert row["judgment_note"] == "継続保有"
+
+
 def test_master_page_renders(client, db):
     seed_stock_holding(db)
     r = client.get("/master")

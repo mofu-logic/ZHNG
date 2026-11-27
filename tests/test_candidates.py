@@ -213,6 +213,63 @@ def test_candidate_update_and_target_alert(client, db, monkeypatch):
     ).status_code == 422
 
 
+def test_candidate_partial_update_keeps_unspecified_fields(
+    client, db, monkeypatch
+):
+    monkeypatch.setattr(main.httpx, "AsyncClient", _named_fake_client())
+    client.post("/api/v1/candidates", json={"code": "7777"})  # close 1000
+    r = client.put(
+        "/api/v1/candidates/7777",
+        json={"policy": "配当・優待", "memo": "決算を見る",
+              "target_price": 1200},
+    )
+    assert r.status_code == 200
+    # Sending only one field must keep the rest (partial update).
+    r = client.put(
+        "/api/v1/candidates/7777", json={"memo": "新しいメモ"}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["memo"] == "新しいメモ"
+    assert body["policy"] == "配当・優待"
+    assert body["target_price"] == 1200.0
+    assert body["reached"] is True  # 1000 <= 1200 still holds
+    row = db.execute(
+        "SELECT policy, memo, target_price FROM candidates"
+        " WHERE code='7777'"
+    ).fetchone()
+    assert row["policy"] == "配当・優待"
+    assert row["memo"] == "新しいメモ"
+    assert float(row["target_price"]) == 1200.0
+
+
+def test_candidate_explicit_null_clears_only_that_field(
+    client, db, monkeypatch
+):
+    monkeypatch.setattr(main.httpx, "AsyncClient", _named_fake_client())
+    client.post("/api/v1/candidates", json={"code": "7777"})  # close 1000
+    client.put(
+        "/api/v1/candidates/7777",
+        json={"policy": "配当・優待", "memo": "決算を見る",
+              "target_price": 1200},
+    )
+    # An explicit null clears that field, and only that field.
+    r = client.put("/api/v1/candidates/7777", json={"memo": None})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["memo"] is None
+    assert body["policy"] == "配当・優待"
+    assert body["target_price"] == 1200.0
+    assert body["reached"] is True
+    row = db.execute(
+        "SELECT policy, memo, target_price FROM candidates"
+        " WHERE code='7777'"
+    ).fetchone()
+    assert row["memo"] is None
+    assert row["policy"] == "配当・優待"
+    assert float(row["target_price"]) == 1200.0
+
+
 def test_candidate_long_memo_truncated_with_hover(client, db, monkeypatch):
     monkeypatch.setattr(main.httpx, "AsyncClient", _named_fake_client())
     client.post("/api/v1/candidates", json={"code": "7777"})

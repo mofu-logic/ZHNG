@@ -1087,11 +1087,26 @@ def delete_candidate(conn, code):
     return cur.rowcount > 0
 
 
-def update_candidate(conn, code, *, policy, memo, target_price):
+def update_candidate(conn, code, **fields):
+    """Partial update: only the fields present in `fields` are updated.
+
+    Fields omitted by the caller keep their stored value; a field
+    explicitly set to None is cleared. An empty update only checks
+    that the row exists (so PUT {} keeps the row unchanged).
+    """
+    fields = {k: v for k, v in fields.items()
+              if k in ("policy", "memo", "target_price")}
+    if not fields:
+        row = conn.execute(
+            "SELECT 1 FROM candidates WHERE code = %s", (code,)
+        ).fetchone()
+        return row is not None
+    sets = [f"{key} = %s" for key in fields]
+    params = list(fields.values())
+    params.append(code)
     cur = conn.execute(
-        "UPDATE candidates SET policy = %s, memo = %s, target_price = %s"
-        " WHERE code = %s",
-        (policy, memo, target_price, code),
+        f"UPDATE candidates SET {', '.join(sets)} WHERE code = %s",
+        tuple(params),
     )
     return cur.rowcount > 0
 
@@ -1114,22 +1129,35 @@ def candidates_at_target(conn):
     ).fetchall()
 
 
-def update_benefit(conn, code, *, benefit_value, benefit_desc, judgment_on,
-                   judgment_note, funding_target, policy=None):
+def update_benefit(conn, code, **fields):
+    """Partial update: only the fields present in `fields` are updated.
+
+    Fields omitted by the caller keep their stored value; a field
+    explicitly set to None is cleared. An empty update only checks
+    that the row exists (so PUT {} keeps the row unchanged).
+    """
+    fields = {k: v for k, v in fields.items() if k in (
+        "benefit_value", "benefit_desc", "judgment_on",
+        "judgment_note", "funding_target", "policy",
+    )}
+    if not fields:
+        row = conn.execute(
+            "SELECT 1 FROM dividend_benefits WHERE code = %s", (code,)
+        ).fetchone()
+        return row is not None
+    sets = []
+    params = []
+    for key, value in fields.items():
+        if key == "funding_target":
+            value = True if value else None
+        sets.append(f"{key} = %s")
+        params.append(value)
+    sets.append("info_updated_on = %s")
+    params.append(datetime.now(JST).date())
+    params.append(code)
     cur = conn.execute(
-        "UPDATE dividend_benefits SET benefit_value=%s,"
-        " benefit_desc=%s, judgment_on=%s, judgment_note=%s, funding_target=%s,"
-        " policy=%s, info_updated_on=%s WHERE code=%s",
-        (
-            benefit_value,
-            benefit_desc,
-            judgment_on,
-            judgment_note,
-            True if funding_target else None,
-            policy,
-            datetime.now(JST).date(),
-            code,
-        ),
+        f"UPDATE dividend_benefits SET {', '.join(sets)} WHERE code = %s",
+        tuple(params),
     )
     return cur.rowcount > 0
 
@@ -1507,7 +1535,7 @@ def api_benefits_get(code: str):
 @app.put("/api/v1/dividend-benefits/{code}", response_model=BenefitOut, tags=["dividend-benefits"])
 def api_benefits_update(code: str, payload: BenefitIn):
     with db() as conn:
-        updated = update_benefit(conn, code, **payload.model_dump())
+        updated = update_benefit(conn, code, **payload.model_dump(exclude_unset=True))
         if not updated:
             raise HTTPException(
                 status_code=404, detail="dividend benefit not found"
@@ -1615,8 +1643,7 @@ def api_candidates_update(code: str, payload: CandidateUpdateIn):
     code = code.strip().upper()
     with db() as conn:
         updated = update_candidate(
-            conn, code, policy=payload.policy, memo=payload.memo,
-            target_price=payload.target_price,
+            conn, code, **payload.model_dump(exclude_unset=True)
         )
         conn.commit()
         if not updated:
