@@ -515,6 +515,26 @@ def test_import_invalid_mode_is_422(client, db):
     assert _all_events(db) == []
 
 
+def test_import_truly_undecodable_file_is_422(client, db):
+    # A truncated Shift_JIS lead byte decodes as neither UTF-8 nor
+    # cp932. (0xFF alone would slip through cp932 as a private-use
+    # character and only fail later, at header resolution.)
+    r = _import(client, b"\x82\x20\x82", FULL_MAPPING)
+    assert r.status_code == 422
+    assert _count(db, "holdings") == 0
+
+
+def test_import_blank_code_mapping_is_422(client, db):
+    # A whitespace-only code_col is a present-but-empty mapping:
+    # stripped away, it leaves the required code mapping missing.
+    _seed_stock(db)
+    data = _csv(["9999,特定,800,100,0,0,"])
+    mapping = dict(FULL_MAPPING, code_col=" ")
+    r = _import(client, data, mapping)
+    assert r.status_code == 422
+    assert _count(db, "holdings") == 0
+
+
 def test_import_header_only_file_imports_nothing(client, db):
     r = _import(client, _csv([]), FULL_MAPPING)
     assert r.status_code == 200
@@ -524,6 +544,79 @@ def test_import_header_only_file_imports_nothing(client, db):
     assert body["skipped"] == 0
     assert body["failed"] == 0
     assert body["failures"] == []
+
+
+# ------------------------------------------------- unmapped core columns
+# The brief left rows without a shares / avg_price mapping to the
+# implementer; the chosen rule (documented in ARCHITECTURE.md) is:
+# shares is required for every row, and avg_price is required
+# whenever a row creates a holding or merges in "add" mode. An
+# "overwrite" of an existing holding keeps its stored price when
+# avg_price is unmapped.
+
+
+def test_import_without_shares_mapping_fails_every_row(client, db):
+    _seed_stock(db)
+    data = _csv(["9999,800"], header=None)
+    mapping = {"code_col": "1", "avg_price_col": "2"}
+    r = _import(client, data, mapping)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["added"] == 0
+    assert body["failed"] == 1
+    assert body["failures"][0]["row"] == 1
+    assert body["failures"][0]["reason"]
+    assert _count(db, "holdings") == 0
+    assert _all_events(db) == []
+
+
+def test_import_without_avg_price_mapping(client, db):
+    _seed_holding(db)  # 9999 特定: 100 @ 800
+    _seed_stock(db, "1111", "別銘柄")
+    data = _csv([
+        "9999,200",
+        "1111,50",
+    ], header=None)
+    mapping = {"code_col": "1", "shares_col": "2"}
+    r = _import(client, data, mapping, mode="overwrite")
+    assert r.status_code == 200
+    body = r.json()
+    # The existing row is overwritten without a price mapping: the
+    # shares are replaced and the stored price survives. The new
+    # code cannot be created without a price and fails as a row.
+    assert body["updated"] == 1
+    assert body["failed"] == 1
+    assert body["failures"][0]["row"] == 2
+    h = _holding(db)
+    assert h["shares"] == 200
+    assert float(h["avg_price"]) == 800.0
+    assert _holding(db, "1111") is None
+
+
+def test_import_row_value_edge_cases(client, db):
+    _seed_stock(db, "1111", "銘柄甲")
+    _seed_stock(db, "2222", "銘柄乙")
+    _seed_stock(db, "3333", "銘柄丙")
+    data = _csv([
+        "1111,特定,abc,100,0,0,",    # row 2: price not a number
+        "2222,特定,500,-5,0,0,",     # row 3: negative shares
+        "3333,特定,500,100,,,",      # row 4: blank lent / ordered
+        "1111,特定,-100,100,0,0,",   # row 5: negative price
+        "2222,特定,NaN,100,0,0,",    # row 6: non-finite price
+    ])
+    r = _import(client, data, FULL_MAPPING)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["added"] == 1
+    assert body["failed"] == 4
+    assert [f["row"] for f in body["failures"]] == [2, 3, 5, 6]
+    assert all(f["reason"] for f in body["failures"])
+    # Blank auxiliary counts import as 0, like unmapped ones.
+    h = _holding(db, "3333")
+    assert h["lent_shares"] == 0
+    assert h["ordered_shares"] == 0
+    assert _holding(db, "1111") is None
+    assert _holding(db, "2222") is None
 
 
 # ---------------------------------------------------------------- page
