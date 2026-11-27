@@ -55,13 +55,13 @@
 
   // Shared helpers for the JSON API (/api/v1): the UI and external
   // integrations use the same interface.
-  async function apiJson(method, url, obj) {
+  async function apiJson(method, url, obj, failMsg = '保存できませんでした') {
     const r = await fetch(url, {
       method,
       headers: {'Content-Type': 'application/json'},
       body: obj === undefined ? undefined : JSON.stringify(obj),
     });
-    if (!r.ok) { alert('保存できませんでした（' + r.status + '）'); throw new Error('api ' + r.status); }
+    if (!r.ok) { alert(failMsg + '（' + r.status + '）'); throw new Error('api ' + r.status); }
     return r.status === 204 ? null : r.json();
   }
   // Modern modal dialog (replaces alert/confirm). Resolves true when
