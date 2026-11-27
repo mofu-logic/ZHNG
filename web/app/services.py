@@ -90,13 +90,17 @@ def _linkage_event(conn, source_type, source_id, kind):
 
 
 def _latest_open_event(conn, code, account_type):
-    """The newest buy/sell event for a holding that no reversal has
-    undone yet. Only that event may be rolled back: undoing an older
-    one would silently rewrite the newer changes on top of it."""
+    """The newest event for a holding that still stands: not a
+    reversal itself and not undone by one. Every kind counts --
+    buy/sell linkage, manual add/delete, future imports -- because
+    any later change, whoever made it, sits on top of the earlier
+    ones. Only the trade behind this event may be rolled back:
+    undoing an older one would silently rewrite the newer changes
+    on top of it."""
     return conn.execute(
         "SELECT * FROM holding_events e"
         " WHERE e.code = %s AND e.account_type = %s"
-        " AND e.kind IN ('buy', 'sell')"
+        " AND e.reverses_event_id IS NULL"
         " AND NOT EXISTS (SELECT 1 FROM holding_events r"
         "                 WHERE r.reverses_event_id = e.id)"
         " ORDER BY e.id DESC LIMIT 1",
@@ -428,13 +432,16 @@ def delete_holding(conn, holding_id):
     'deleted': while the holding's latest unreversed linkage event
     is a buy/sell event the delete is blocked — the trade side
     must be cancelled first, otherwise the ledger would lose the
-    thread back to the trade that made the change."""
+    thread back to the trade that made the change. A manual add
+    as the latest event does not block: the row's newest change is
+    manual, so deleting it by hand keeps the ledger consistent."""
     row = conn.execute(
         "SELECT * FROM holdings WHERE id = %s", (holding_id,)
     ).fetchone()
     if row is None:
         return "not_found"
-    if _latest_open_event(conn, row["code"], row["account_type"]) is not None:
+    latest = _latest_open_event(conn, row["code"], row["account_type"])
+    if latest is not None and latest["kind"] in ("buy", "sell"):
         return "blocked"
     _record_event(
         conn, code=row["code"], account_type=row["account_type"],
