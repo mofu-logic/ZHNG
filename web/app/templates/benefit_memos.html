@@ -16,14 +16,14 @@
       <td class="code">{{ r.code }}</td>
       <td><span class="name">{{ r.name or '' }}</span></td>
       <td>{{ r.shareholder_no or '' }}</td>
-      <td>{{ r.deadline_1 or '' }}</td>
-      <td>{{ r.deadline_2 or '' }}</td>
+      <td class="date">{{ r.deadline_1 or '' }}</td>
+      <td class="date">{{ r.deadline_2 or '' }}</td>
       <td>{{ '〇' if r.delivery_waiting else '―' }}</td>
       <td>{% if r.status %}{% if r.status|length > 20 %}<span class="memo-tip" data-tip="{{ r.status }}">{{ r.status[:20] }}…</span>{% else %}{{ r.status }}{% endif %}{% endif %}</td>
-      <td>{{ r.form_arrival_1 or '' }}</td>
-      <td>{{ r.form_arrival_2 or '' }}</td>
-      <td>{{ r.item_arrival_1 or '' }}</td>
-      <td>{{ r.item_arrival_2 or '' }}</td>
+      <td class="date">{{ r.form_arrival_1 or '' }}</td>
+      <td class="date">{{ r.form_arrival_2 or '' }}</td>
+      <td class="date">{{ r.item_arrival_1 or '' }}</td>
+      <td class="date">{{ r.item_arrival_2 or '' }}</td>
       <td class="nowrap"><button type="button" class="delbtn" style="color:#20304d" data-edit-memo="{{ r.code }}" data-name="{{ r.name or '' }}">編集</button></td>
     </tr>
   {% endfor %}

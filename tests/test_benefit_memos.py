@@ -286,3 +286,14 @@ def test_benefit_memo_null_delivery_waiting_clears_to_false(client, db):
         "SELECT delivery_waiting FROM benefit_memos WHERE code='1001'"
     ).fetchone()
     assert row["delivery_waiting"] is False
+
+
+def test_benefit_memos_page_date_cells_use_nowrap_class(client, db):
+    _seed_targets(db)
+    client.put("/api/v1/benefit-memos/1001", json=FULL_MEMO)
+    page = client.get("/benefit-memos").text
+    # Every date cell carries the .date (white-space: nowrap) class so a
+    # date never wraps onto two lines.
+    for field in ("deadline_1", "deadline_2", "form_arrival_1",
+                  "form_arrival_2", "item_arrival_1", "item_arrival_2"):
+        assert '<td class="date">%s</td>' % FULL_MEMO[field] in page
