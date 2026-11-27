@@ -19,6 +19,11 @@ description: CI と同じ条件で pytest スイート（分岐カバレッジ�
 - `tests/test_fetch.py` — `httpx` をフェイククライアントに差し替えて
   夜間取得パイプラインを通しで実行（価格、スナップショット、配当の
   自動更新と変更記録、日経取得失敗の分離）。
+- `tests/test_properties.py` — プロパティベースドテスト
+  （Hypothesis）。純粋関数（`next_run_at`、数値整形、Yahoo ページの
+  パース、設定の金額計算）について、生成した多様な入力で性質
+  （不変条件）を検証する。`@pytest.mark.property` 付きで
+  `-m property` で選択できる。DB 不要。
 
 DB 依存テストは `TEST_DATABASE_URL` を読む。テスト用 DB に接続
 できない場合は**失敗ではなくスキップ**になるため、スキップありの
@@ -42,6 +47,25 @@ docker run --rm --network stock-app_default -v "$PWD":/repo -w /repo \
   stock-app-web:latest sh -c \
   "pip install -q -r web/requirements-dev.txt; \
    python -m pytest tests --cov=app --cov-report=term-missing -q"
+```
+
+## プロパティテストのプロファイル（2層運用）
+
+Hypothesis のプロファイルは `tests/conftest.py` で登録され、
+環境変数 `HYPOTHESIS_PROFILE` で切り替える（未指定は `light`）。
+
+- `light`（通常実行・CI のデフォルト）：max_examples=25、
+  derandomize=True で失敗がそのまま再現できる。通常実行の速さを
+  保つための層。
+- `heavy`：max_examples=300。リリース・デプロイ前の大きな
+  イベント前に、性質テストだけを深く回すための層。
+
+heavy で性質テストだけを実行するには、上記の使い捨てコンテナの
+実行に `-e HYPOTHESIS_PROFILE=heavy` を追加し、pytest の対象を
+絞る：
+
+```sh
+python -m pytest tests -m property -q
 ```
 
 ## カバレッジ

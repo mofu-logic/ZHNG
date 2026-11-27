@@ -20,9 +20,24 @@ os.environ["DATABASE_URL"] = TEST_DB_URL
 
 import psycopg
 import pytest
+from hypothesis import settings as _hypothesis_settings
 from psycopg.rows import dict_row
 
 from app import main
+
+# Hypothesis profiles (two-tier operation for the property tests in
+# tests/test_properties.py):
+# - "light" (default, also what CI runs): few examples, derandomized
+#   so failures reproduce exactly and the suite stays fast.
+# - "heavy": many more examples for pre-release / pre-deploy digging.
+# Select with the HYPOTHESIS_PROFILE environment variable.
+_hypothesis_settings.register_profile(
+    "light", max_examples=25, derandomize=True
+)
+_hypothesis_settings.register_profile("heavy", max_examples=300)
+_hypothesis_settings.load_profile(
+    os.environ.get("HYPOTHESIS_PROFILE", "light")
+)
 
 TABLES = [
     "app_logs",
