@@ -111,16 +111,23 @@ gh api repos/<owner>/<repo>/code-scanning/default-setup
 # Dependabot security updates
 gh api repos/<owner>/<repo>/automated-security-fixes
 
-# Private vulnerability reporting（必ず専用エンドポイントで）
+# Private vulnerability reporting（専用エンドポイントで裏取りすること）
 gh api -i repos/<owner>/<repo>/private-vulnerability-reporting
 ```
 
-注意：
+### 確認方法の原則
 
-- Private vulnerability reporting は、リポジトリ情報の
-  フィールドが `null` を返すことがあり、それだけでは
-  有効／無効を判定できない。必ず専用エンドポイントの
-  応答で確認すること。
+- 設定値の確認は、リポジトリ情報のような集約 API の
+  フィールドだけで判断しない。各機能に専用エンドポイントや
+  専用の取得方法がある場合は、そちらで裏取りすること。
+  集約側のフィールドは `null` や古い値を返すことがあり、
+  それだけでは実態を判断できないことがある。
+- 実例：Private vulnerability reporting は、リポジトリ
+  情報のフィールドが `null` を返したが、専用エンドポイント
+  では有効だった。
+
+### その他の注意
+
 - 必須ステータスチェックの名前は CI のジョブ名そのもの。
   CI のジョブを変更したら、ルールセット側も追随しているか
   あわせて確認すること。
