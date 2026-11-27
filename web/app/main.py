@@ -58,10 +58,13 @@ from app.services import (
     delete_buy,
     delete_candidate,
     delete_sale,
+    get_benefit_memo_row,
+    list_benefit_memo_rows,
     list_candidate_rows,
     register_candidate,
     update_benefit,
     update_candidate,
+    upsert_benefit_memo,
 )
 from app.settings import (
     DEFAULT_FETCH_START_TIME,
@@ -514,6 +517,26 @@ def master(request: Request):
     )
 
 
+@app.get("/benefit-memos", response_class=HTMLResponse)
+def benefit_memos_page(request: Request):
+    with db() as conn:
+        rows = [_benefit_memo_out(r) for r in list_benefit_memo_rows(conn)]
+    editor = {
+        r["code"]: {
+            field: r[field]
+            for field in (
+                "shareholder_no", "deadline_1", "deadline_2",
+                "delivery_waiting", "status", "form_arrival_1",
+                "form_arrival_2", "item_arrival_1", "item_arrival_2",
+            )
+        }
+        for r in rows
+    }
+    return templates.TemplateResponse(
+        request, "benefit_memos.html", dict(rows=rows, editor=editor)
+    )
+
+
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request):
     with db() as conn:
@@ -785,6 +808,71 @@ def api_benefits_update(code: str, payload: BenefitIn):
         ).fetchone()
     emit_event("master.updated", code=code)
     return _benefit_out(row)
+
+
+def _benefit_memo_out(r):
+    return dict(
+        code=r["code"], name=r.get("name"),
+        shareholder_no=r["shareholder_no"],
+        deadline_1=_date_out(r["deadline_1"]),
+        deadline_2=_date_out(r["deadline_2"]),
+        delivery_waiting=bool(r["delivery_waiting"]),
+        status=r["status"],
+        form_arrival_1=_date_out(r["form_arrival_1"]),
+        form_arrival_2=_date_out(r["form_arrival_2"]),
+        item_arrival_1=_date_out(r["item_arrival_1"]),
+        item_arrival_2=_date_out(r["item_arrival_2"]),
+    )
+
+
+class BenefitMemoIn(BaseModel):
+    shareholder_no: str | None = None
+    deadline_1: date | None = None
+    deadline_2: date | None = None
+    delivery_waiting: bool | None = None
+    status: str | None = None
+    form_arrival_1: date | None = None
+    form_arrival_2: date | None = None
+    item_arrival_1: date | None = None
+    item_arrival_2: date | None = None
+
+
+class BenefitMemoOut(BaseModel):
+    code: str
+    name: str | None
+    shareholder_no: str | None
+    deadline_1: date | None
+    deadline_2: date | None
+    delivery_waiting: bool
+    status: str | None
+    form_arrival_1: date | None
+    form_arrival_2: date | None
+    item_arrival_1: date | None
+    item_arrival_2: date | None
+
+
+@app.get("/api/v1/benefit-memos", response_model=list[BenefitMemoOut], tags=["benefit-memos"])
+def api_benefit_memos_list():
+    with db() as conn:
+        rows = list_benefit_memo_rows(conn)
+    return [_benefit_memo_out(r) for r in rows]
+
+
+@app.put("/api/v1/benefit-memos/{code}", response_model=BenefitMemoOut, tags=["benefit-memos"])
+def api_benefit_memos_update(code: str, payload: BenefitMemoIn):
+    code = code.strip().upper()
+    with db() as conn:
+        updated = upsert_benefit_memo(
+            conn, code, **payload.model_dump(exclude_unset=True)
+        )
+        if not updated:
+            raise HTTPException(
+                status_code=404, detail="銘柄が見つかりません"
+            )
+        conn.commit()
+        row = get_benefit_memo_row(conn, code)
+    emit_event("benefit_memo.updated", code=code)
+    return _benefit_memo_out(row)
 
 
 @app.get("/api/v1/settings", response_model=SettingsOut, tags=["settings"])

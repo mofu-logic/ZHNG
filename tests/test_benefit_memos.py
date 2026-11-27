@@ -6,7 +6,6 @@ it has a dividend_benefits row with a benefit (benefit_value > 0 or a
 non-empty benefit_desc) AND it is currently held. The memo itself is
 keyed by stock code and is upserted with partial updates.
 """
-import pytest
 from conftest import seed_stock_holding
 
 FULL_MEMO = {
@@ -26,22 +25,6 @@ MEMO_FIELDS = (
     "status", "form_arrival_1", "form_arrival_2",
     "item_arrival_1", "item_arrival_2",
 )
-
-
-@pytest.fixture(autouse=True)
-def _clean_benefit_memos(db):
-    """Keep memo rows from leaking between tests.
-
-    benefit_memos is not in conftest's truncate list yet, so clean it
-    here when the table exists (it does not before the feature lands).
-    """
-    exists = db.execute(
-        "SELECT to_regclass('public.benefit_memos') AS t"
-    ).fetchone()["t"]
-    if exists:
-        db.execute("TRUNCATE benefit_memos")
-        db.commit()
-    yield
 
 
 def _seed_targets(db):

@@ -41,6 +41,7 @@ _hypothesis_settings.load_profile(
 
 TABLES = [
     "app_logs",
+    "benefit_memos",
     "candidates",
     "dividend_changes",
     "daily_snapshots",

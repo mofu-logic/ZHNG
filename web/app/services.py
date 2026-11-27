@@ -193,3 +193,92 @@ def update_benefit(conn, code, **fields):
         tuple(params),
     )
     return cur.rowcount > 0
+
+
+BENEFIT_MEMO_FIELDS = (
+    "shareholder_no", "deadline_1", "deadline_2", "delivery_waiting",
+    "status", "form_arrival_1", "form_arrival_2",
+    "item_arrival_1", "item_arrival_2",
+)
+
+_BENEFIT_MEMO_SELECT = (
+    "m.shareholder_no, m.deadline_1, m.deadline_2,"
+    " COALESCE(m.delivery_waiting, FALSE) AS delivery_waiting,"
+    " m.status, m.form_arrival_1, m.form_arrival_2,"
+    " m.item_arrival_1, m.item_arrival_2"
+)
+
+
+def list_benefit_memo_rows(conn):
+    """Benefit memos for the display targets.
+
+    A stock is a target only when its dividend master row carries a
+    benefit (benefit_value > 0 or a non-empty benefit_desc) and the
+    stock is currently held. Targets without a memo yet come back
+    with null memo fields (delivery_waiting falls back to false).
+    """
+    return conn.execute(
+        f"""
+        SELECT d.code, s.name, {_BENEFIT_MEMO_SELECT}
+        FROM dividend_benefits d
+        JOIN stocks s ON s.code = d.code
+        LEFT JOIN benefit_memos m ON m.code = d.code
+        WHERE (d.benefit_value > 0 OR COALESCE(d.benefit_desc, '') <> '')
+          AND EXISTS (
+              SELECT 1 FROM holdings h WHERE h.code = d.code
+          )
+        ORDER BY d.code
+        """
+    ).fetchall()
+
+
+def get_benefit_memo_row(conn, code):
+    """One stock with its memo (if any), regardless of the display rule."""
+    return conn.execute(
+        f"""
+        SELECT s.code, s.name, {_BENEFIT_MEMO_SELECT}
+        FROM stocks s
+        LEFT JOIN benefit_memos m ON m.code = s.code
+        WHERE s.code = %s
+        """,
+        (code,),
+    ).fetchone()
+
+
+def upsert_benefit_memo(conn, code, **fields):
+    """Create or partially update the memo for a stock.
+
+    Only the fields present in `fields` are written: omitted fields
+    keep their stored value, a field explicitly set to None is
+    cleared. Returns False when the code is not in the stock master
+    (the caller turns that into a 404). The memo is keyed on the
+    stock alone, so a stock outside the display rule can still hold
+    a memo; it just never shows on the list.
+    """
+    stock = conn.execute(
+        "SELECT 1 FROM stocks WHERE code = %s", (code,)
+    ).fetchone()
+    if stock is None:
+        return False
+    fields = {k: v for k, v in fields.items()
+              if k in BENEFIT_MEMO_FIELDS}
+    # delivery_waiting is NOT NULL: an explicit null means "clear",
+    # which for a flag is false.
+    if fields.get("delivery_waiting", True) is None:
+        fields["delivery_waiting"] = False
+    if not fields:
+        conn.execute(
+            "INSERT INTO benefit_memos(code) VALUES (%s)"
+            " ON CONFLICT(code) DO NOTHING",
+            (code,),
+        )
+        return True
+    cols = list(fields)
+    conn.execute(
+        f"INSERT INTO benefit_memos(code, {', '.join(cols)})"
+        f" VALUES ({', '.join(['%s'] * (len(cols) + 1))})"
+        " ON CONFLICT(code) DO UPDATE SET "
+        + ", ".join(f"{c} = EXCLUDED.{c}" for c in cols),
+        (code, *fields.values()),
+    )
+    return True
