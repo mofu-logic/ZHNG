@@ -10,10 +10,10 @@
   <button type="button" id="buy-add-open">購入を追加</button>
 </div>
 <div class="tblwrap">
-<table>
+<table id="buys">
   <thead><tr>
-    <th>買付日</th><th>銘柄コード</th><th>銘柄名</th><th class="num">取得単価</th><th class="num">株数</th>
-    <th>購入方針</th><th>購入契機</th><th>メモ</th><th>約定状態</th><th>口座区分</th><th>保有への反映</th><th></th>
+    <th class="sortable" data-type="str">買付日</th><th class="sortable" data-type="str">銘柄コード</th><th class="sortable" data-type="str">銘柄名</th><th class="sortable num" data-type="num">取得単価</th><th class="sortable num" data-type="num">株数</th>
+    <th class="sortable" data-type="str">購入方針</th><th class="sortable" data-type="str">購入契機</th><th class="sortable" data-type="str">メモ</th><th class="sortable" data-type="str">約定状態</th><th class="sortable" data-type="str">口座区分</th><th class="sortable" data-type="str">保有への反映</th><th></th>
   </tr></thead>
   <tbody>
   {% for b in buys %}
@@ -21,8 +21,8 @@
       <td class="date">{{ b.purchase_date or '―' }}</td>
       <td class="code">{{ b.code or '' }}</td>
       <td><span class="name">{{ b.name or '' }}</span></td>
-      <td class="num">{{ b.avg_price|price }}</td>
-      <td class="num">{{ b.shares or '' }}</td>
+      <td class="num" data-v="{{ b.avg_price or 0 }}">{{ b.avg_price|price }}</td>
+      <td class="num" data-v="{{ b.shares or 0 }}">{{ b.shares or '' }}</td>
       <td>{{ b.policy or '' }}</td>
       <td>{{ b.trigger_note or '' }}</td>
       <td>{% if b.note %}{% if b.note|length > 20 %}<span class="memo-tip" data-tip="{{ b.note }}">{{ b.note[:20] }}…</span>{% else %}{{ b.note }}{% endif %}{% endif %}</td>
@@ -45,10 +45,10 @@
   <button type="button" id="sell-add-open">売却を追加</button>
 </div>
 <div class="tblwrap">
-<table>
+<table id="sales">
   <thead><tr>
-    <th>注文日</th><th>約定日</th><th>銘柄コード</th><th>銘柄名</th><th class="num">売り単価</th>
-    <th class="num">約定株数／注文株数</th><th class="num">損益</th><th>約定状態</th><th>メモ</th><th>口座区分</th><th>保有への反映</th><th></th>
+    <th class="sortable" data-type="str">注文日</th><th class="sortable" data-type="str">約定日</th><th class="sortable" data-type="str">銘柄コード</th><th class="sortable" data-type="str">銘柄名</th><th class="sortable num" data-type="num">売り単価</th>
+    <th class="sortable num" data-type="num">約定株数／注文株数</th><th class="sortable num" data-type="num">損益</th><th class="sortable" data-type="str">約定状態</th><th class="sortable" data-type="str">メモ</th><th class="sortable" data-type="str">口座区分</th><th class="sortable" data-type="str">保有への反映</th><th></th>
   </tr></thead>
   <tbody>
   {% for s in sales %}
@@ -57,9 +57,9 @@
       <td class="date">{{ s.executed_date or '―' }}</td>
       <td class="code">{{ s.code or '' }}</td>
       <td><span class="name">{{ s.name or '' }}</span></td>
-      <td class="num">{{ s.sell_price|price }}</td>
-      <td class="num">{{ s.executed_shares or 0 }} / {{ s.sell_shares or '' }}</td>
-      <td class="num {{ 'pos' if (s.profit or 0) >= 0 else 'neg' }}">{{ s.profit|signed }}</td>
+      <td class="num" data-v="{{ s.sell_price or 0 }}">{{ s.sell_price|price }}</td>
+      <td class="num" data-v="{{ s.executed_shares or 0 }}">{{ s.executed_shares or 0 }} / {{ s.sell_shares or '' }}</td>
+      <td class="num {{ 'pos' if (s.profit or 0) >= 0 else 'neg' }}" data-v="{{ s.profit or 0 }}">{{ s.profit|signed }}</td>
       <td class="nowrap"><span class="tag">{{ s.status }}</span></td>
       <td>{% if s.memo %}{% if s.memo|length > 20 %}<span class="memo-tip" data-tip="{{ s.memo }}">{{ s.memo[:20] }}…</span>{% else %}{{ s.memo }}{% endif %}{% endif %}</td>
       <td>{{ s.account_type or '' }}</td>
@@ -211,6 +211,70 @@
   }
   tabs.forEach(t => t.addEventListener('click', () => activate(t.dataset.tab)));
   if (location.hash === '#sell') activate('sell');
+
+  // Column sorting, same behavior as the other tables.
+  const buysTbody = document.querySelector('#buys tbody');
+  if (buysTbody) {
+    const buysRows = Array.from(buysTbody.querySelectorAll('tr'));
+    const stripeBuys = () => {
+      let i = 0;
+      Array.from(buysTbody.querySelectorAll('tr')).forEach(r => {
+        r.classList.toggle('alt', i % 2 === 1);
+        i++;
+      });
+    };
+    document.querySelectorAll('#buys th.sortable').forEach((th, idx) => {
+      th.addEventListener('click', () => {
+        const type = th.dataset.type;
+        const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+        document.querySelectorAll('#buys th').forEach(h => delete h.dataset.dir);
+        th.dataset.dir = dir;
+        const sorted = buysRows.slice().sort((a, b) => {
+          const ca = a.children[idx], cb = b.children[idx];
+          let va, vb;
+          if (type === 'num') { va = parseFloat(ca.dataset.v || 0); vb = parseFloat(cb.dataset.v || 0); }
+          else { va = ca.textContent.trim(); vb = cb.textContent.trim(); }
+          const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+          return dir === 'asc' ? cmp : -cmp;
+        });
+        sorted.forEach(r => buysTbody.appendChild(r));
+        th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (dir === 'asc' ? ' ▲' : ' ▼');
+        stripeBuys();
+      });
+    });
+  }
+
+  // Column sorting, same behavior as the other tables.
+  const salesTbody = document.querySelector('#sales tbody');
+  if (salesTbody) {
+    const salesRows = Array.from(salesTbody.querySelectorAll('tr'));
+    const stripeSales = () => {
+      let i = 0;
+      Array.from(salesTbody.querySelectorAll('tr')).forEach(r => {
+        r.classList.toggle('alt', i % 2 === 1);
+        i++;
+      });
+    };
+    document.querySelectorAll('#sales th.sortable').forEach((th, idx) => {
+      th.addEventListener('click', () => {
+        const type = th.dataset.type;
+        const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+        document.querySelectorAll('#sales th').forEach(h => delete h.dataset.dir);
+        th.dataset.dir = dir;
+        const sorted = salesRows.slice().sort((a, b) => {
+          const ca = a.children[idx], cb = b.children[idx];
+          let va, vb;
+          if (type === 'num') { va = parseFloat(ca.dataset.v || 0); vb = parseFloat(cb.dataset.v || 0); }
+          else { va = ca.textContent.trim(); vb = cb.textContent.trim(); }
+          const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+          return dir === 'asc' ? cmp : -cmp;
+        });
+        sorted.forEach(r => salesTbody.appendChild(r));
+        th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (dir === 'asc' ? ' ▲' : ' ▼');
+        stripeSales();
+      });
+    });
+  }
 
   // Add forms live in modal dialogs, same shell as the holdings add
   // form on the dashboard: open button, cancel button, backdrop click.
