@@ -595,3 +595,244 @@ def test_fetch_all_stores_decimal_close_price(db, fake_fetch, monkeypatch):
     assert float(snap["close_price"]) == 830.4
     assert float(snap["prev_close"]) == 825.3
     assert snap["volume"] == 1234500
+
+
+# --- Daily snapshot upsert: both write paths ----------------------------
+# daily_snapshots is written from two places: _store_quote for regular
+# stocks (fetch_all and candidate registration) and an inline upsert
+# for the Nikkei (code N225). The tests below pin, column by column,
+# what each path stores today, plus the last-write-wins overwrite on a
+# same-day refetch, so consolidating the two upserts cannot drift
+# either path's output.
+
+_JP_SNAPSHOT = {
+    "close_price": 1000.0,
+    "prev_close": 990.0,
+    "open_price": 995.0,
+    "day_high": 1010.0,
+    "day_low": 985.0,
+    "volume": 123456,
+    "market_cap_m": 1234567.0,
+    "dividend_forecast": 50.0,
+    "dividend_yield": 5.0,
+    "per": 11.17,
+    "pbr": 1.23,
+}
+
+# JP_PAGE with every field changed; the anchors are the fixture's
+# literal values, each unique in the page.
+JP_PAGE_V2 = (
+    JP_PAGE.replace(">1,000<", ">1,100<")
+    .replace(">990<", ">1,050<")
+    .replace(">995<", ">1,060<")
+    .replace(">1,010<", ">1,120<")
+    .replace(">985<", ">1,040<")
+    .replace(">123,456<", ">234,567<")
+    .replace(">1,234,567<", ">2,345,678<")
+    .replace(">50<", ">60<")
+    .replace(">5.00<", ">5.45<")
+    .replace("11.17", "12.50")
+    .replace(">1.23<", ">1.45<")
+)
+
+_JP_SNAPSHOT_V2 = {
+    "close_price": 1100.0,
+    "prev_close": 1050.0,
+    "open_price": 1060.0,
+    "day_high": 1120.0,
+    "day_low": 1040.0,
+    "volume": 234567,
+    "market_cap_m": 2345678.0,
+    "dividend_forecast": 60.0,
+    "dividend_yield": 5.45,
+    "per": 12.5,
+    "pbr": 1.45,
+}
+
+# The INDEX_PAGE fixture carries only the previous close; every other
+# value column of the N225 row is NULL.
+_N225_SNAPSHOT = {
+    "close_price": 58644.63,
+    "prev_close": 57011.62,
+    "open_price": None,
+    "day_high": None,
+    "day_low": None,
+    "volume": None,
+    "market_cap_m": None,
+    "dividend_forecast": None,
+    "dividend_yield": None,
+    "per": None,
+    "pbr": None,
+}
+
+
+def _assert_snapshot(row, expected):
+    assert row is not None
+    for column, want in expected.items():
+        got = row[column]
+        if want is None:
+            assert got is None, column
+        elif column == "volume":
+            assert got == want, column
+        else:
+            assert float(got) == want, column
+
+
+def _snapshot_of(db, code):
+    return db.execute(
+        "SELECT * FROM daily_snapshots WHERE code = %s AND snap_date = %s",
+        (code, _snap_date_today()),
+    ).fetchone()
+
+
+def test_fetch_all_snapshot_stores_all_columns(db, fake_fetch):
+    _seed_two_stocks(db)
+    fake_fetch()
+    asyncio.run(main.fetch_all("batch"))
+
+    for code in ("8888", "9999"):
+        _assert_snapshot(_snapshot_of(db, code), _JP_SNAPSHOT)
+    _assert_snapshot(_snapshot_of(db, "N225"), _N225_SNAPSHOT)
+
+
+class _SnapshotClient:
+    """Serves one fixed page for every stock and one for the Nikkei."""
+
+    def __init__(self, stock_page, index_page, headers=None, timeout=None):
+        self.stock_page = stock_page
+        self.index_page = index_page
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url):
+        if "998407" in url:
+            return FakeResponse(200, self.index_page)
+        return FakeResponse(200, self.stock_page)
+
+
+def _install_snapshot_client(monkeypatch, stock_page, index_page):
+    monkeypatch.setattr(
+        main.httpx,
+        "AsyncClient",
+        lambda **kw: _SnapshotClient(stock_page, index_page, **kw),
+    )
+
+
+def test_fetch_all_snapshot_last_write_wins_for_stocks(
+    db, fake_fetch, monkeypatch
+):
+    _seed_two_stocks(db)
+    fake_fetch()
+    asyncio.run(main.fetch_all("batch"))
+    _assert_snapshot(_snapshot_of(db, "9999"), _JP_SNAPSHOT)
+
+    # A same-day refetch overwrites every value column of the existing
+    # snapshot row instead of adding a second one; the raw price
+    # points, by contrast, are append-only.
+    _install_snapshot_client(monkeypatch, JP_PAGE_V2, INDEX_PAGE)
+    asyncio.run(main.fetch_all("batch"))
+
+    for code in ("8888", "9999"):
+        rows = db.execute(
+            "SELECT * FROM daily_snapshots WHERE code = %s", (code,)
+        ).fetchall()
+        assert len(rows) == 1
+        _assert_snapshot(rows[0], _JP_SNAPSHOT_V2)
+    points = db.execute(
+        "SELECT count(*) c FROM price_points WHERE code = '9999'"
+    ).fetchone()
+    assert points["c"] == 2
+    # The index row kept its own values.
+    _assert_snapshot(_snapshot_of(db, "N225"), _N225_SNAPSHOT)
+
+
+def _index_page(price, prev_close, open_price, day_high, day_low, volume):
+    """A Nikkei page in the INDEX_PAGE structure (common price board
+    plus a data list) with a full field set. Values are the literal
+    page texts; None renders as "---" (absent from the parse)."""
+
+    def item(name, value):
+        body = (
+            f'<span class="_StyledNumber__value_2">{value}</span>'
+            if value is not None
+            else "---"
+        )
+        return (
+            '<dt class="_DataListItem__term_a">'
+            f'<span class="_DataListItem__name_b">{name}</span></dt>'
+            f"<dd>{body}</dd>"
+        )
+
+    return (
+        "<html><body>"
+        '<div class="_CommonPriceBoard__price_y">'
+        f'<span class="_StyledNumber__value_9">{price}</span></div>'
+        "<dl>"
+        + item("前日終値", prev_close)
+        + item("始値", open_price)
+        + item("高値", day_high)
+        + item("安値", day_low)
+        + item("出来高", volume)
+        + "</dl></body></html>"
+    )
+
+
+def test_fetch_all_snapshot_nikkei_columns_and_last_write_wins(
+    db, fake_fetch, monkeypatch
+):
+    _seed_two_stocks(db)
+    fake_fetch()  # patches sleep and the lock; client replaced below
+
+    # The index path stores the OHLC values it parsed, but the other
+    # value columns stay NULL even though the page carries a volume:
+    # the N225 upsert writes NULL for them literally.
+    _install_snapshot_client(
+        monkeypatch,
+        JP_PAGE,
+        _index_page(
+            "58,644.63", "57,011.62", "57,500", "58,900", "57,200",
+            "1,234,567",
+        ),
+    )
+    asyncio.run(main.fetch_all("batch"))
+    _assert_snapshot(
+        _snapshot_of(db, "N225"),
+        {
+            **_N225_SNAPSHOT,
+            "open_price": 57500.0,
+            "day_high": 58900.0,
+            "day_low": 57200.0,
+        },
+    )
+
+    _install_snapshot_client(
+        monkeypatch,
+        JP_PAGE,
+        _index_page(
+            "59,100.25", "58,644.63", "58,700", "59,300", "58,500",
+            "2,345,678",
+        ),
+    )
+    asyncio.run(main.fetch_all("batch"))
+
+    rows = db.execute(
+        "SELECT * FROM daily_snapshots WHERE code = 'N225'"
+    ).fetchall()
+    assert len(rows) == 1
+    _assert_snapshot(
+        rows[0],
+        {
+            **_N225_SNAPSHOT,
+            "close_price": 59100.25,
+            "prev_close": 58644.63,
+            "open_price": 58700.0,
+            "day_high": 59300.0,
+            "day_low": 58500.0,
+        },
+    )
+    # The stock rows kept their own values.
+    _assert_snapshot(_snapshot_of(db, "9999"), _JP_SNAPSHOT)
