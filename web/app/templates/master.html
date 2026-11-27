@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import memo_tip %}
 {% block content %}
 <div style="display:flex; align-items:center; gap:10px; margin:20px 0 8px">
   <h2 style="margin:0">配当・優待マスタ</h2>
@@ -17,9 +18,9 @@
       <td><span class="name">{{ r.name or '' }}</span></td>
       <td class="num" data-v="{{ r.dividend_auto if r.dividend_auto is not none else (r.dividend_forecast or 0) }}">{{ r.dividend_auto if r.dividend_auto is not none else (r.dividend_forecast if r.dividend_forecast is not none else '―') }}</td>
       <td class="num" data-v="{{ r.benefit_value or 0 }}">{% if r.benefit_value is not none %}{{ r.benefit_value|yen }}{% else %}―{% endif %}</td>
-      <td>{% if r.benefit_desc %}{% if r.benefit_desc|length > 20 %}<span class="memo-tip" data-tip="{{ r.benefit_desc }}">{{ r.benefit_desc[:20] }}…</span>{% else %}{{ r.benefit_desc }}{% endif %}{% endif %}</td>
+      <td>{{ memo_tip(r.benefit_desc) }}</td>
       <td class="date">{{ r.judgment_on or '' }}</td>
-      <td>{% if r.judgment_note %}{% if r.judgment_note|length > 20 %}<span class="memo-tip" data-tip="{{ r.judgment_note }}">{{ r.judgment_note[:20] }}…</span>{% else %}{{ r.judgment_note }}{% endif %}{% endif %}</td>
+      <td>{{ memo_tip(r.judgment_note) }}</td>
       <td>{{ r.policy or '' }}</td>
       <td>{{ '候補' if r.funding_target else '―' }}</td>
       <td class="nowrap"><button type="button" class="delbtn" style="color:#20304d" data-edit-benefit="{{ r.code }}" data-name="{{ r.name or '' }}">編集</button></td>
@@ -32,38 +33,6 @@
   // Updates go through the JSON API (/api/v1), same as external clients.
   const EDITOR = {{ editor|tojson }};
   const POLICY_PARTS = ['値上がり', '配当', '優待'];
-
-  // Column sorting, same behavior as the other tables.
-  const mtbody = document.querySelector('#master tbody');
-  if (mtbody) {
-    const mrows = Array.from(mtbody.querySelectorAll('tr'));
-    const stripeMaster = () => {
-      let i = 0;
-      Array.from(mtbody.querySelectorAll('tr')).forEach(r => {
-        r.classList.toggle('alt', i % 2 === 1);
-        i++;
-      });
-    };
-    document.querySelectorAll('#master th.sortable').forEach((th, idx) => {
-      th.addEventListener('click', () => {
-        const type = th.dataset.type;
-        const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
-        document.querySelectorAll('#master th').forEach(h => delete h.dataset.dir);
-        th.dataset.dir = dir;
-        const sorted = mrows.slice().sort((a, b) => {
-          const ca = a.children[idx], cb = b.children[idx];
-          let va, vb;
-          if (type === 'num') { va = parseFloat(ca.dataset.v || 0); vb = parseFloat(cb.dataset.v || 0); }
-          else { va = ca.textContent.trim(); vb = cb.textContent.trim(); }
-          const cmp = va < vb ? -1 : va > vb ? 1 : 0;
-          return dir === 'asc' ? cmp : -cmp;
-        });
-        sorted.forEach(r => mtbody.appendChild(r));
-        th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (dir === 'asc' ? ' ▲' : ' ▼');
-        stripeMaster();
-      });
-    });
-  }
 
   // Editor dialog for the hand-maintained fields (same modal shell
   // as showDialog, with form fields).

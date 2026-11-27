@@ -145,6 +145,40 @@
   function numOrNull(v) { return v === '' || v == null ? null : Number(v); }
   function intOrNull(v) { return v === '' || v == null ? null : parseInt(v, 10); }
 
+  // Column sorting, shared by every table with sortable headers:
+  // clicking a header sorts its own table by that column (numeric
+  // columns compare the raw data-v, text columns the cell text) and
+  // toggles the direction on the next click. Striping is redone over
+  // the visible rows only, so rows hidden by a page filter keep their
+  // state (the dashboard filter relies on this).
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const table = th.closest('table');
+      const tbody = table.querySelector('tbody');
+      const idx = Array.from(th.parentNode.children).indexOf(th);
+      const type = th.dataset.type;
+      const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+      table.querySelectorAll('th').forEach(h => delete h.dataset.dir);
+      th.dataset.dir = dir;
+      const sorted = Array.from(tbody.querySelectorAll('tr')).sort((a, b) => {
+        const ca = a.children[idx], cb = b.children[idx];
+        let va, vb;
+        if (type === 'num') { va = parseFloat(ca.dataset.v || 0); vb = parseFloat(cb.dataset.v || 0); }
+        else { va = ca.textContent.trim(); vb = cb.textContent.trim(); }
+        const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+        return dir === 'asc' ? cmp : -cmp;
+      });
+      sorted.forEach(r => tbody.appendChild(r));
+      th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (dir === 'asc' ? ' ▲' : ' ▼');
+      let i = 0;
+      tbody.querySelectorAll('tr').forEach(r => {
+        if (r.style.display === 'none') return;
+        r.classList.toggle('alt', i % 2 === 1);
+        i++;
+      });
+    });
+  });
+
   // Visible-row striping for static tables (dashboard does its own after filter/sort)
   document.querySelectorAll('tbody').forEach(tb => {
     if (tb.closest('#holdings')) return;

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import memo_tip %}
 {% block content %}
 <div style="display:flex; align-items:center; gap:10px; margin:20px 0 8px">
   <h2 style="margin:0">購入候補</h2>
@@ -30,7 +31,7 @@
       <td class="num" data-v="{{ r.per or 0 }}">{{ r.per|price }}</td>
       <td class="num" data-v="{{ r.pbr or 0 }}">{{ r.pbr|price }}</td>
       <td>{{ r.policy or '' }}</td>
-      <td>{% if r.memo %}{% if r.memo|length > 20 %}<span class="memo-tip" data-tip="{{ r.memo }}">{{ r.memo[:20] }}…</span>{% else %}{{ r.memo }}{% endif %}{% endif %}</td>
+      <td>{{ memo_tip(r.memo) }}</td>
       <td class="num" data-v="{{ r.target_price or 0 }}">{{ r.target_price|price }}{% if r.reached %} <span class="tag" style="color:#c62f3b;border-color:#c62f3b;font-weight:700">到達</span>{% endif %}</td>
       <td class="date">{{ r.snap_date or '―' }}</td>
       <td class="nowrap"><button type="button" class="delbtn" style="color:#20304d" data-edit-candidate="{{ r.code }}" data-name="{{ r.name or '' }}">編集</button> <button type="button" class="delbtn" data-del-candidate="{{ r.code }}" data-name="{{ r.name or '' }}">削除</button></td>
@@ -229,38 +230,6 @@
       });
     });
   });
-
-  // Column sorting, same behavior as the holdings table.
-  const ctbody = document.querySelector('#candidates tbody');
-  if (ctbody) {
-    const crows = Array.from(ctbody.querySelectorAll('tr'));
-    const stripeCandidates = () => {
-      let i = 0;
-      Array.from(ctbody.querySelectorAll('tr')).forEach(r => {
-        r.classList.toggle('alt', i % 2 === 1);
-        i++;
-      });
-    };
-    document.querySelectorAll('#candidates th.sortable').forEach((th, idx) => {
-      th.addEventListener('click', () => {
-        const type = th.dataset.type;
-        const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
-        document.querySelectorAll('#candidates th').forEach(h => delete h.dataset.dir);
-        th.dataset.dir = dir;
-        const sorted = crows.slice().sort((a, b) => {
-          const ca = a.children[idx], cb = b.children[idx];
-          let va, vb;
-          if (type === 'num') { va = parseFloat(ca.dataset.v || 0); vb = parseFloat(cb.dataset.v || 0); }
-          else { va = ca.textContent.trim(); vb = cb.textContent.trim(); }
-          const cmp = va < vb ? -1 : va > vb ? 1 : 0;
-          return dir === 'asc' ? cmp : -cmp;
-        });
-        sorted.forEach(r => ctbody.appendChild(r));
-        th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (dir === 'asc' ? ' ▲' : ' ▼');
-        stripeCandidates();
-      });
-    });
-  }
 
   document.querySelectorAll('[data-del-candidate]').forEach(btn => {
     btn.addEventListener('click', async () => {
