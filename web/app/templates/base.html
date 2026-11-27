@@ -61,7 +61,7 @@
       headers: {'Content-Type': 'application/json'},
       body: obj === undefined ? undefined : JSON.stringify(obj),
     });
-    if (!r.ok) { alert('保存に失敗しました（' + r.status + '）'); throw new Error('api ' + r.status); }
+    if (!r.ok) { alert('保存できませんでした（' + r.status + '）'); throw new Error('api ' + r.status); }
     return r.status === 204 ? null : r.json();
   }
   // Modern modal dialog (replaces alert/confirm). Resolves true when

@@ -2,7 +2,7 @@
 {% block title %}動作ログ{% endblock %}
 {% block content %}
 <h2>動作ログ</h2>
-<p class="sub">構造化ログ（OpenTelemetry 形式）の直近200件。保持期間は90日です。</p>
+<p class="sub">構造化ログ（OpenTelemetry 形式）の直近200件。保持期間は{{ log_retention_days }}日です。</p>
 
 <form class="filters" method="get" action="/logs">
   <label>レベル
