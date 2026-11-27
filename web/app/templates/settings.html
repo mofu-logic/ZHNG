@@ -33,6 +33,17 @@
     </tbody>
   </table>
 
+  <h3 style="margin-top:22px">データ取得</h3>
+  <table>
+    <tbody>
+      <tr>
+        <td>夜間バッチの開始時刻</td>
+        <td><input type="time" name="fetch_start_time" value="{{ fetch_start_time }}" style="width:140px"></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="sub">株価と配当の夜間バッチを開始する時刻（JST）です。変更は再起動なしで反映されます。</div>
+
   <h3 style="margin-top:22px">ログ</h3>
   <table>
     <tbody>
@@ -91,6 +102,7 @@
       otel_enabled: form.querySelector('[name="otel_enabled"]').checked,
       otel_endpoint: strOrNull(f.get('otel_endpoint')),
       swagger_enabled: form.querySelector('[name="swagger_enabled"]').checked,
+      fetch_start_time: f.get('fetch_start_time'),
     });
     location.reload();
   });

@@ -63,6 +63,8 @@ from app.services import (
     update_candidate,
 )
 from app.settings import (
+    DEFAULT_FETCH_START_TIME,
+    FETCH_START_TIME_PATTERN,
     app_config,
     get_settings,
     prune_app_logs,
@@ -607,6 +609,9 @@ class SettingsIn(BaseModel):
     otel_enabled: bool = False
     otel_endpoint: str | None = None
     swagger_enabled: bool = False
+    fetch_start_time: str = Field(
+        default=DEFAULT_FETCH_START_TIME, pattern=FETCH_START_TIME_PATTERN
+    )
 
 
 class BuyOut(BaseModel):
@@ -665,6 +670,7 @@ class SettingsOut(BaseModel):
     otel_enabled: bool
     otel_endpoint: str
     swagger_enabled: bool
+    fetch_start_time: str
 
 
 @app.get("/api/v1/buys", response_model=list[BuyOut], tags=["buys"])
@@ -967,6 +973,7 @@ def data_page(request: Request):
             GROUP BY snap_date ORDER BY snap_date DESC LIMIT 3
             """
         ).fetchall()
+        fetch_start_time = app_config(conn)["fetch_start_time"]
     runs_out = []
     for r in runs:
         d = dict(r)
@@ -982,7 +989,10 @@ def data_page(request: Request):
     return templates.TemplateResponse(
         request,
         "data.html",
-        dict(runs=runs_out, prices=prices, daily=daily, fetching=_fetch_lock.locked()),
+        dict(
+            runs=runs_out, prices=prices, daily=daily,
+            fetching=_fetch_lock.locked(), fetch_start_time=fetch_start_time,
+        ),
     )
 
 

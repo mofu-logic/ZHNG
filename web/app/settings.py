@@ -1,14 +1,25 @@
 """設定まわりのサービス層。
 
-数値設定（KPI）とアプリ設定（ログ保持期間・OTel・Swagger）の
-読み書き。月あたり所得の目標はここで自動算出する（直接入力した
-値を保存しない）。
+数値設定（KPI）とアプリ設定（ログ保持期間・OTel・Swagger・
+夜間バッチ開始時刻）の読み書き。月あたり所得の目標はここで
+自動算出する（直接入力した値を保存しない）。
 
 formatting.py（round_half_up）と config.py にのみ依存する
 （循環 import を作らない）。
 """
 
+import re
+
 from app.formatting import round_half_up
+
+DEFAULT_FETCH_START_TIME = "01:00"
+FETCH_START_TIME_PATTERN = r"^([01][0-9]|2[0-3]):[0-5][0-9]$"
+_FETCH_START_TIME_RE = re.compile(FETCH_START_TIME_PATTERN)
+
+
+def is_valid_fetch_start_time(value):
+    """True when value is a valid "HH:MM" fetch start time."""
+    return isinstance(value, str) and bool(_FETCH_START_TIME_RE.match(value))
 
 
 def get_settings(conn):
@@ -42,7 +53,8 @@ def update_settings(conn, *, tax_rate_pct, target_dividend_total,
                     target_yield_buy_pct, target_yield_now_pct,
                     target_yield_value_pct, log_retention_days=90,
                     otel_enabled=False, otel_endpoint=None,
-                    swagger_enabled=False):
+                    swagger_enabled=False,
+                    fetch_start_time=DEFAULT_FETCH_START_TIME):
     # Monthly after-tax income target is derived, not entered directly:
     # annual dividend target x (1 - tax rate) / 12.
     monthly = round_half_up(target_dividend_total * (1 - tax_rate_pct / 100) / 12)
@@ -66,6 +78,7 @@ def update_settings(conn, *, tax_rate_pct, target_dividend_total,
         ("otel_enabled", "true" if otel_enabled else "false"),
         ("otel_endpoint", otel_endpoint or ""),
         ("swagger_enabled", "true" if swagger_enabled else "false"),
+        ("fetch_start_time", fetch_start_time),
     ):
         conn.execute(
             "INSERT INTO settings(key, value) VALUES (%s, %s)"
@@ -74,6 +87,7 @@ def update_settings(conn, *, tax_rate_pct, target_dividend_total,
         )
     values["otel_enabled"] = bool(otel_enabled)
     values["swagger_enabled"] = bool(swagger_enabled)
+    values["fetch_start_time"] = fetch_start_time
     return values
 
 
@@ -88,7 +102,8 @@ def _raw_setting(conn, key):
 
 
 def app_config(conn):
-    """The non-KPI app settings: log retention and OTel integration."""
+    """The non-KPI app settings: log retention, OTel integration,
+    Swagger, and the nightly fetch start time."""
     retention = _raw_setting(conn, "log_retention_days")
     try:
         retention_days = (
@@ -96,11 +111,17 @@ def app_config(conn):
         )
     except ValueError:
         retention_days = DEFAULT_LOG_RETENTION_DAYS
+    stored_start_time = _raw_setting(conn, "fetch_start_time")
     return dict(
         log_retention_days=retention_days,
         otel_enabled=_raw_setting(conn, "otel_enabled") == "true",
         otel_endpoint=_raw_setting(conn, "otel_endpoint") or "",
         swagger_enabled=_raw_setting(conn, "swagger_enabled") == "true",
+        fetch_start_time=(
+            stored_start_time
+            if is_valid_fetch_start_time(stored_start_time)
+            else DEFAULT_FETCH_START_TIME
+        ),
     )
 
 

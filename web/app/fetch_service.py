@@ -20,6 +20,7 @@ import httpx
 from app.config import JST
 from app.db import db as _default_db
 from app.observability import emit_event
+from app.settings import app_config
 from app.yahoo import (
     UA,
     parse_index_page,
@@ -189,7 +190,7 @@ async def fetch_all(note="manual", *, db=_default_db, lock):
                             except Exception:
                                 industry = None
                             await asyncio.sleep(random.uniform(3, 8))
-                        # The 01:00 batch reads the previous trading day's close;
+                        # The nightly batch reads the previous trading day's close;
                         # JST-9h maps the fetch moment to that trading day.
                         snap_date = (datetime.now(JST) - timedelta(hours=9)).date()
                         with db() as conn:
@@ -308,16 +309,41 @@ async def _finish_run(run_id, ok, ng, first_error, *, db=_default_db):
     logger.error("fetch run %s: completion update gave up after 3 attempts", run_id)
 
 
+def next_run_at(now, start_time):
+    """start_time ("HH:MM") の次回発生時刻を返す。今日のその時刻
+    （秒・マイクロ秒は0）が now より後なら今日、そうでなければ翌日。"""
+    hour, minute = (int(part) for part in start_time.split(":"))
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return target
+
+
 async def scheduler(*, db=_default_db, lock):
-    """01:00 JST に fetch_all("batch") を実行する。lock は必須
-    (fetch_all の docstring を参照)。"""
+    """設定された開始時刻 (fetch_start_time、デフォルト01:00 JST) に
+    fetch_all("batch") を実行する。lock は必須 (fetch_all の docstring
+    を参照)。待機中は最大60秒ごとに設定を読み直して次回を再計算する
+    ので、開始時刻の変更は再起動なしで反映される。設定時刻を過ぎた
+    時刻への変更では即時実行せず、次回発生時刻に実行する。"""
     while True:
-        now = datetime.now(JST)
-        target = now.replace(hour=1, minute=0, second=0, microsecond=0)
-        if target <= now:
-            target += timedelta(days=1)
-        await asyncio.sleep((target - now).total_seconds())
         try:
-            await fetch_all("batch", db=db, lock=lock)
+            with db() as conn:
+                start_time = app_config(conn)["fetch_start_time"]
+            now = datetime.now(JST)
+            target = next_run_at(now, start_time)
+            wait_seconds = min((target - now).total_seconds(), 60)
+            await asyncio.sleep(wait_seconds)
+            if datetime.now(JST) < target:
+                continue
+            try:
+                await fetch_all("batch", db=db, lock=lock)
+            except Exception:
+                logger.exception("scheduled fetch failed")
         except Exception:
-            logger.exception("scheduled fetch failed")
+            # 設定の読み直しは最大60秒ごとに行うため、一時的なDB障害で
+            # 例外がループを抜けるとスケジューラが恒常停止してしまう。
+            # 記録してバックオフを挟み、次の反復で回復を待つ。
+            logger.exception(
+                "scheduler iteration failed; retrying in 60 seconds"
+            )
+            await asyncio.sleep(60)
