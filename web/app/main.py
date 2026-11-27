@@ -59,12 +59,17 @@ from app.services import (
     candidates_at_target,
     candidate_exists,
     create_buy,
+    create_holding,
     create_sale,
     delete_buy,
     delete_candidate,
+    delete_holding,
     delete_sale,
+    find_holding,
     get_benefit_memo_row,
+    get_holding,
     list_benefit_memo_rows,
+    list_holding_events,
     list_candidate_rows,
     register_candidate,
     update_benefit,
@@ -613,6 +618,28 @@ def _benefit_out(r):
     )
 
 
+def _holding_out(r):
+    return dict(
+        id=r["id"], code=r["code"], name=r.get("name"),
+        account_type=r["account_type"], custody_type=r["custody_type"],
+        avg_price=fnum(r["avg_price"]), shares=r["shares"],
+        lent_shares=r["lent_shares"], ordered_shares=r["ordered_shares"],
+    )
+
+
+def _holding_event_out(r):
+    return dict(
+        id=r["id"], code=r["code"], account_type=r["account_type"],
+        kind=r["kind"], source_type=r["source_type"],
+        source_id=r["source_id"], delta_shares=r["delta_shares"],
+        shares_before=r["shares_before"], shares_after=r["shares_after"],
+        avg_price_before=fnum(r["avg_price_before"]),
+        avg_price_after=fnum(r["avg_price_after"]),
+        reverses_event_id=r["reverses_event_id"],
+        created_at=r["created_at"],
+    )
+
+
 class BuyIn(BaseModel):
     code: Annotated[str, StringConstraints(strip_whitespace=True,
                                            min_length=1)]
@@ -881,6 +908,122 @@ def api_sales_delete(sale_id: int):
         )
     emit_event("history.sell_deleted", id=sale_id)
     return None
+
+
+class HoldingIn(BaseModel):
+    code: Annotated[str, StringConstraints(strip_whitespace=True,
+                                           min_length=1)]
+    account_type: Annotated[str, StringConstraints(strip_whitespace=True,
+                                                   min_length=1)]
+    avg_price: float = Field(ge=0)
+    shares: int = Field(ge=0)
+    lent_shares: int = Field(default=0, ge=0)
+    ordered_shares: int = Field(default=0, ge=0)
+    custody_type: str | None = None
+
+
+class HoldingOut(BaseModel):
+    id: int
+    code: str
+    name: str | None
+    account_type: str | None
+    custody_type: str | None
+    avg_price: float | None
+    shares: int
+    lent_shares: int
+    ordered_shares: int
+
+
+class HoldingEventOut(BaseModel):
+    id: int
+    code: str
+    account_type: str | None
+    kind: str
+    source_type: str
+    source_id: int | None
+    delta_shares: int
+    shares_before: int
+    shares_after: int
+    avg_price_before: float | None
+    avg_price_after: float | None
+    reverses_event_id: int | None
+    created_at: datetime
+
+
+@app.post("/api/v1/holdings", status_code=201, response_model=HoldingOut, tags=["holdings"])
+def api_holdings_create(payload: HoldingIn):
+    code = payload.code.strip().upper()
+    fetched = None
+    with db() as conn:
+        duplicate = (
+            find_holding(conn, code, payload.account_type) is not None
+        )
+        known = conn.execute(
+            "SELECT 1 FROM stocks WHERE code = %s", (code,)
+        ).fetchone()
+    if duplicate:
+        raise HTTPException(
+            status_code=409,
+            detail="この銘柄・口座の保有はすでに登録されています",
+        )
+    if known is None:
+        # A code the stock master does not know yet is fetched from
+        # Yahoo first, like purchase-candidate registration and
+        # linked buys; when the fetch fails nothing is registered.
+        try:
+            market, name, price, fields = asyncio.run(fetch_one_quote(code))
+        except RuntimeError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"銘柄情報を取得できませんでした: {e}",
+            )
+        fetched = (name or code, market)
+    with db() as conn:
+        if fetched is not None:
+            upsert_stock_info(conn, code, fetched[0], fetched[1])
+        row = create_holding(
+            conn, code=code, account_type=payload.account_type,
+            avg_price=payload.avg_price, shares=payload.shares,
+            lent_shares=payload.lent_shares,
+            ordered_shares=payload.ordered_shares,
+            custody_type=payload.custody_type,
+        )
+        conn.commit()
+        out = _holding_out(get_holding(conn, row["id"]))
+    emit_event("holding.added", id=row["id"], code=code,
+               account_type=payload.account_type)
+    return out
+
+
+@app.delete("/api/v1/holdings/{id}", status_code=204, tags=["holdings"])
+def api_holdings_delete(id: int):
+    with db() as conn:
+        outcome = delete_holding(conn, id)
+        if outcome == "deleted":
+            conn.commit()
+    if outcome == "not_found":
+        raise HTTPException(status_code=404, detail="holding not found")
+    if outcome == "blocked":
+        raise HTTPException(
+            status_code=409,
+            detail="売買履歴との連動が残っているため削除できません。"
+                   "先に売買履歴を取り消してください",
+        )
+    emit_event("holding.deleted", id=id)
+    return None
+
+
+@app.get("/api/v1/holdings/{id}/events", response_model=list[HoldingEventOut], tags=["holdings"])
+def api_holdings_events(id: int):
+    with db() as conn:
+        holding = get_holding(conn, id)
+        if holding is not None:
+            rows = list_holding_events(
+                conn, holding["code"], holding["account_type"]
+            )
+    if holding is None:
+        raise HTTPException(status_code=404, detail="holding not found")
+    return [_holding_event_out(r) for r in rows]
 
 
 @app.get("/api/v1/dividend-benefits", response_model=list[BenefitOut], tags=["dividend-benefits"])
