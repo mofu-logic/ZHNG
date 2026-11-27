@@ -56,10 +56,11 @@ def test_history_page_shows_account_type(client, db):
     # back on the page.
     assert 'name="account_type"' in page
     assert "f.get('account_type')" in page
-    assert "口座区分" in page
-    # Both tables carry the account column under its short label
-    # 口座 (the dialogs keep the 口座区分 label), alongside the
-    # status column; the link-state column is gone.
+    # The visible wording is the unified 口座, dialog labels
+    # included; 口座区分 survives nowhere on the page.
+    assert "口座区分" not in page
+    # Both tables carry the account column under the 口座 label,
+    # alongside the status column; the link-state column is gone.
     heads = re.findall(r"<thead>(.*?)</thead>", page, re.S)
     assert len(heads) == 2
     for head in heads:

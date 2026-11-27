@@ -17,10 +17,11 @@ Two owner decisions about the /history tables:
 - The account column moved next to the stock name and its header
   shortened to 口座, matching the holdings table on the dashboard.
   The cell values （特定 / NISA / 普通, empty when the trade has no
-  account type) are unchanged, and so are the add dialogs, whose
-  label stays 口座区分. The column stays sortable through the
-  shared header wiring (the sort suite pins the full header
-  sequence, labels and data-types included).
+  account type) are unchanged. The column stays sortable through
+  the shared header wiring (the sort suite pins the full header
+  sequence, labels and data-types included). The dialogs' label
+  is unified to 口座 too; tests/test_account_label.py pins the
+  wording across screens.
 """
 import re
 

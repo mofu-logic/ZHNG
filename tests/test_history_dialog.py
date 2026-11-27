@@ -314,8 +314,8 @@ def test_history_tables_show_account_type(client, db):
     heads = re.findall(r"<thead>(.*?)</thead>", page, re.S)
     assert len(heads) == 2
     for head in heads:
-        # The table header uses the short label 口座 (the add
-        # dialogs keep 口座区分); the cell values are unchanged.
+        # The table header uses the unified label 口座 (the add
+        # dialogs use the same word); the cell values are unchanged.
         assert re.search(r">口座</th>", head)
         assert "口座区分" not in head
     bodies = re.findall(r"<tbody>(.*?)</tbody>", page, re.S)

@@ -676,7 +676,8 @@ def test_history_page_linkage_ui(client, db):
     # select in the add dialogs, column in the tables), so a screen
     # registration names the account it links to.
     assert 'name="account_type"' in page
-    assert "口座区分" in page
+    # The wording is the unified 口座; 口座区分 appears nowhere.
+    assert "口座区分" not in page
     # The link-state column is gone (owner decision: every row
     # read 対象外 in production, so the tags carried no
     # information; the dedicated spec lives in
