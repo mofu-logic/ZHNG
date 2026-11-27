@@ -26,12 +26,44 @@ from fastapi.templating import Jinja2Templates
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field, StringConstraints
 
+from app.formatting import (
+    fnum,
+    fmt_pct,
+    fmt_pct_signed,
+    fmt_pct_value,
+    fmt_price,
+    fmt_signed,
+    fmt_yen,
+    register_jinja_filters,
+    round_half_up,
+)
 from app.observability import (
     OtelBridgeHandler,
     configure_otlp,
     emit_event,
     setup_observability,
 )
+from app.yahoo import (
+    UA,
+    fetch_one_quote,
+    parse_index_page,
+    parse_jp_page,
+    parse_profile_page,
+    suffix_for_market,
+)
+
+# formatting.py / yahoo.py へ移した関数のうち、main.py 内のコードでは
+# 直接使わないものもテスト（tests/test_format.py など）が app.main 経由で
+# import しているため、ここで再エクスポートする。__all__ に載せることで
+# 未使用 import として lint に指摘されないようにする。
+__all__ = [
+    "fmt_pct",
+    "fmt_pct_signed",
+    "fmt_pct_value",
+    "fmt_price",
+    "fmt_signed",
+    "fmt_yen",
+]
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 
@@ -46,10 +78,6 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
     logger.propagate = False
 JST = ZoneInfo("Asia/Tokyo")
-UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
-)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS stocks(
@@ -116,145 +144,12 @@ def db():
     )
 
 
-def fnum(v):
-    return None if v is None else float(v)
-
-
-# ---------------------------------------------------------------- formatting
-def fmt_price(v):
-    if v is None:
-        return "―"
-    v = float(v)
-    s = f"{v:,.2f}".rstrip("0").rstrip(".")
-    return s
-
-
-def fmt_yen(v):
-    if v is None:
-        return "―"
-    v = float(v)
-    if v == int(v):
-        return f"{int(v):,}"
-    return f"{v:,.1f}"
-
-
-def fmt_signed(v):
-    if v is None:
-        return "―"
-    v = float(v)
-    sign = "+" if v > 0 else ""
-    return sign + fmt_yen(v)
-
-
-def fmt_pct(v):
-    if v is None:
-        return "―"
-    return f"{float(v) * 100:.2f}%"
-
-
-def fmt_pct_value(v):
-    """Format a value that is already in percent units (e.g. snapshot yields)."""
-    if v is None:
-        return "―"
-    return f"{float(v):.2f}%"
-
-
-def fmt_pct_signed(v):
-    if v is None:
-        return "―"
-    v = float(v)
-    return ("+" if v > 0 else "") + f"{v:.2f}%"
-
-
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
-templates.env.filters["pctv"] = fmt_pct_value
-templates.env.filters["pcts"] = fmt_pct_signed
-templates.env.filters["signed2"] = lambda v: (
-    "" if v is None else ("+" if float(v) > 0 else "") + fmt_price(v)
-)
-templates.env.filters["price"] = fmt_price
-templates.env.filters["yen"] = fmt_yen
-templates.env.filters["signed"] = fmt_signed
-templates.env.filters["pct"] = fmt_pct
+register_jinja_filters(templates.env)
 
 
 # ---------------------------------------------------------------- price fetch
 _fetch_lock = asyncio.Lock()
-
-
-def _page_fields(html):
-    fields = {}
-    for term, dd in re.findall(
-        r"_DataListItem__term_[^\" >]*\">(.*?)</dt>\s*<dd[^>]*>(.*?)</dd>", html, re.S
-    ):
-        name = "".join(
-            re.findall(r"_DataListItem__(?:name|sub)_[^\" >]*\">([^<]*)<", term)
-        )
-        if not name or name in fields:
-            continue
-        vm = re.search(r"_StyledNumber__value_[^\"]*\">([\d,\.]+)", dd)
-        if vm:
-            fields[name] = float(vm.group(1).replace(",", ""))
-        elif name.startswith("PER"):
-            # PER is rendered like （連）11.17 倍 without a styled number span.
-            plain = re.sub(r"<[^>]+>", "", dd)
-            pm = re.search(r"([\d,\.]+)\s*倍", plain)
-            if pm:
-                fields[name] = float(pm.group(1).replace(",", ""))
-    return fields
-
-
-# Yahoo! Finance Japan quote pages are suffixed per exchange:
-# .T Tokyo, .N Nagoya, .S Sapporo, .F Fukuoka (verified live:
-# 2928 RIZAP is .S only, 1771 is .F only).
-EXCHANGE_SUFFIXES = (("T", "東証"), ("N", "名証"), ("S", "札証"), ("F", "福証"))
-
-
-def suffix_for_market(market):
-    for suffix, name in EXCHANGE_SUFFIXES:
-        if name == market:
-            return suffix
-    return "T"
-
-
-def parse_jp_page(html):
-    """Extract the current price and the labeled data-list values from a
-    Yahoo! Finance Japan quote page (finance.yahoo.co.jp/quote/{code}.T|.N|.S|.F)."""
-    m = re.search(r"_PriceBoard.*?_StyledNumber__value_[^\"]*\">([\d,]+)<", html, re.S)
-    price = float(m.group(1).replace(",", "")) if m else None
-    return price, _page_fields(html)
-
-
-def parse_stock_name(html, code):
-    """The quote page <title> looks like
-    'ソフトバンクグループ(株)【9984】：株価・株式情報 ... - Yahoo!ファイナンス'."""
-    m = re.search(r"<title>(.*?)【" + re.escape(code) + "】", html, re.S)
-    return m.group(1).strip() if m else None
-
-
-def parse_index_page(html):
-    """Nikkei 225 page (quote/998407.O): the main value sits in a
-    _CommonPriceBoard__price_ element; the generic _PriceBoard regex
-    picks up a different index (e.g. TOPIX) that appears earlier."""
-    m = re.search(
-        r"_CommonPriceBoard__price_[^\"]*\">.*?_StyledNumber__value_[^\"]*\">([\d,\.]+)<",
-        html,
-        re.S,
-    )
-    price = float(m.group(1).replace(",", "")) if m else None
-    return price, _page_fields(html)
-
-
-def parse_profile_page(html):
-    """Industry classification from the Yahoo! Finance Japan profile
-    page (quote/{code}.{suffix}/profile): a table row labelled
-    業種分類 whose value is the industry name (linked to a search)."""
-    m = re.search(r"業種分類</th><td[^>]*>(?:<a[^>]*>)?([^<]{1,30})", html)
-    if m:
-        name = m.group(1).strip()
-        if name:
-            return name
-    return None
 
 
 def _store_quote(conn, code, price, fields, snap_date, run_id=None,
@@ -503,27 +398,6 @@ async def fetch_all(note="manual"):
         emit_event("fetch.finished", run_id=run_id, kind=note, ok=ok, ng=ng)
 
 
-async def fetch_one_quote(code):
-    """Fetch one code right now (used when a purchase candidate is
-    registered). Tries each exchange suffix in EXCHANGE_SUFFIXES order.
-    Returns (market, name, price, fields); raises RuntimeError when
-    the code cannot be fetched at all."""
-    async with httpx.AsyncClient(headers={"User-Agent": UA}, timeout=25) as client:
-        for suffix, market in EXCHANGE_SUFFIXES:
-            r = await client.get(
-                f"https://finance.yahoo.co.jp/quote/{code}.{suffix}"
-            )
-            if r.status_code == 404:
-                continue
-            if r.status_code != 200:
-                raise RuntimeError(f"HTTP {r.status_code}")
-            price, fields = parse_jp_page(r.text)
-            if price is None or price <= 0:
-                raise RuntimeError("price not found in page")
-            return market, parse_stock_name(r.text, code), price, fields
-    raise RuntimeError("銘柄が見つかりませんでした")
-
-
 async def _finish_run(run_id, ok, ng, first_error):
     """Record a fetch run's completion. This used to be a single unguarded
     UPDATE at the very end of fetch_all: if it failed, the scheduler's
@@ -695,10 +569,6 @@ async def request_logging(request: Request, call_next):
             duration_ms=round((time.perf_counter() - start) * 1000, 1),
         )
         return response
-
-
-def round_half_up(v):
-    return int(v + 0.5)
 
 
 def get_settings(conn):
