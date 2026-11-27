@@ -9,8 +9,8 @@
 <form class="addform" id="buy-form">
   <label>銘柄コード<input type="text" name="code" required style="width:90px"></label>
   <label>銘柄名<input type="text" name="name" style="width:150px"></label>
-  <label>取得単価<input type="number" name="avg_price" step="any" style="width:100px"></label>
-  <label>株数<input type="number" name="shares" style="width:80px"></label>
+  <label>取得単価<input type="number" name="avg_price" step="any" min="0" style="width:100px"></label>
+  <label>株数<input type="number" name="shares" min="0" style="width:80px"></label>
   <label>買付日<input type="date" name="purchase_date"></label>
   <label>購入方針<input type="text" name="policy" style="width:110px"></label>
   <label>購入契機<input type="text" name="trigger_note" style="width:130px"></label>
@@ -58,12 +58,12 @@
 <form class="addform" id="sell-form">
   <label>銘柄コード<input type="text" name="code" required style="width:90px"></label>
   <label>銘柄名<input type="text" name="name" style="width:150px"></label>
-  <label>取得単価<input type="number" name="buy_price" step="any" style="width:100px"></label>
-  <label>買付株数<input type="number" name="shares" style="width:80px"></label>
+  <label>取得単価<input type="number" name="buy_price" step="any" min="0" style="width:100px"></label>
+  <label>買付株数<input type="number" name="shares" min="0" style="width:80px"></label>
   <label>買付日<input type="date" name="purchase_date"></label>
-  <label>売り単価<input type="number" name="sell_price" step="any" style="width:100px"></label>
-  <label>注文株数<input type="number" name="sell_shares" style="width:80px"></label>
-  <label>約定株数<input type="number" name="executed_shares" style="width:80px"></label>
+  <label>売り単価<input type="number" name="sell_price" step="any" min="0" style="width:100px"></label>
+  <label>注文株数<input type="number" name="sell_shares" min="0" style="width:80px"></label>
+  <label>約定株数<input type="number" name="executed_shares" min="0" style="width:80px"></label>
   <label>注文日<input type="date" name="order_start_date"></label>
   <label>約定日<input type="date" name="executed_date"></label>
   <label>損益（空欄なら自動計算）<input type="number" name="profit" step="any" style="width:110px"></label>
