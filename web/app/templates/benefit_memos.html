@@ -4,6 +4,28 @@
   <h2 style="margin:0">優待メモ</h2>
   <span class="help tip-right" style="margin-left:0" tabindex="0" data-tip="株主優待の申込書・優待品の到着時期やチケットの期限を管理します。表示されるのは、配当・優待マスタで優待があり、現在保有している銘柄だけです。">?</span>
 </div>
+{% if deadline_alerts %}
+<h2>優待期限アラート</h2>
+<div style="padding-left:16px">
+<div class="tblwrap">
+<table>
+  <thead><tr><th>銘柄コード</th><th>銘柄名</th><th>対象</th><th>期限</th><th class="num">残り日数</th></tr></thead>
+  <tbody>
+  {% for a in deadline_alerts %}
+    <tr>
+      <td class="code">{{ a.code }}</td>
+      <td><span class="name">{{ a.name }}</span></td>
+      <td>{{ a.which }}</td>
+      <td class="date">{{ a.deadline }}</td>
+      <td class="num">{% if a.remaining_days > 0 %}あと{{ a.remaining_days }}日{% elif a.remaining_days == 0 %}本日が期限{% else %}期限切れ（{{ -a.remaining_days }}日経過）{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+</div>
+{% endif %}
+
 <div class="tblwrap" style="margin-top:10px">
 <table id="benefit-memos">
   <thead><tr>

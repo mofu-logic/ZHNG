@@ -843,6 +843,34 @@ def list_benefit_memo_rows(conn):
     ).fetchall()
 
 
+def benefit_deadline_alerts(conn, alert_days, today=None):
+    """Benefit deadlines due within `alert_days` days.
+
+    Judged over the benefit-memo display targets (the same rows
+    list_benefit_memo_rows returns). deadline_1 and deadline_2 are
+    judged independently: a deadline whose remaining days
+    (deadline - today, in JST) are at or below the threshold alerts,
+    including ones already past. Unset deadlines never alert. The
+    result is ordered by deadline ascending.
+    """
+    if today is None:
+        today = datetime.now(JST).date()
+    alerts = []
+    for r in list_benefit_memo_rows(conn):
+        for field, label in (("deadline_1", "期限"), ("deadline_2", "期限2")):
+            deadline = r[field]
+            if deadline is None:
+                continue
+            remaining = (deadline - today).days
+            if remaining <= alert_days:
+                alerts.append(dict(
+                    code=r["code"], name=r["name"], which=label,
+                    deadline=deadline, remaining_days=remaining,
+                ))
+    alerts.sort(key=lambda a: a["deadline"])
+    return alerts
+
+
 def get_benefit_memo_row(conn, code):
     """One stock with its memo (if any), regardless of the display rule."""
     return conn.execute(

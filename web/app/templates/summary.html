@@ -23,6 +23,28 @@
 {% endif %}
 </div>
 
+{% if deadline_alerts %}
+<h2>優待期限アラート</h2>
+<div style="padding-left:16px">
+<div class="tblwrap">
+<table>
+  <thead><tr><th>銘柄コード</th><th>銘柄名</th><th>対象</th><th>期限</th><th class="num">残り日数</th></tr></thead>
+  <tbody>
+  {% for a in deadline_alerts %}
+    <tr>
+      <td class="code"><a href="https://finance.yahoo.co.jp/quote/{{ a.code }}" target="_blank" rel="noopener noreferrer">{{ a.code }}</a></td>
+      <td><span class="name">{{ a.name }}</span></td>
+      <td>{{ a.which }}</td>
+      <td class="date">{{ a.deadline }}</td>
+      <td class="num">{% if a.remaining_days > 0 %}あと{{ a.remaining_days }}日{% elif a.remaining_days == 0 %}本日が期限{% else %}期限切れ（{{ -a.remaining_days }}日経過）{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+</div>
+{% endif %}
+
 {% if target_hits %}
 <h2>希望購入価格に到達した購入候補</h2>
 <div style="padding-left:16px">

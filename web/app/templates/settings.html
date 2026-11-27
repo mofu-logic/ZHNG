@@ -44,6 +44,17 @@
   </table>
   <div class="sub">株価と配当の夜間バッチを開始する時刻（JST）です。変更は再起動なしで反映されます。</div>
 
+  <h3 style="margin-top:22px">優待</h3>
+  <table>
+    <tbody>
+      <tr>
+        <td>優待期限アラート日数（日）</td>
+        <td><input type="number" name="benefit_deadline_alert_days" step="1" min="0" max="3650" value="{{ benefit_deadline_alert_days }}" style="width:140px"></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="sub">優待メモの期限までの残り日数がこの日数以下（期限切れを含む）になると、サマリーと優待メモの画面上部にアラートを表示します。</div>
+
   <h3 style="margin-top:22px">ログ</h3>
   <table>
     <tbody>
@@ -103,6 +114,7 @@
       otel_endpoint: strOrNull(f.get('otel_endpoint')),
       swagger_enabled: form.querySelector('[name="swagger_enabled"]').checked,
       fetch_start_time: f.get('fetch_start_time'),
+      benefit_deadline_alert_days: Number(f.get('benefit_deadline_alert_days')),
     });
     location.reload();
   });
