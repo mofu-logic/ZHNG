@@ -6,8 +6,7 @@ in test_holdings_crud.py):
 
 - The endpoint takes multipart form data: the CSV `file`, one
   mapping field per item (`code_col`, `account_type_col`,
-  `avg_price_col`, `shares_col`, `lent_shares_col`,
-  `ordered_shares_col`, `custody_type_col`) whose value is either
+  `avg_price_col`, `shares_col`) whose value is either
   a header name or a 1-based column number, and `mode`.
   `code_col` is required; the other mappings are optional. When
   any mapping names a header, the first row is the header row;
@@ -27,14 +26,12 @@ in test_holdings_crud.py):
   when the fetch fails the row fails and nothing is registered
   for it.
 - Without an account mapping -- or with an empty account cell --
-  the account defaults to "特定". Unmapped lent / ordered /
-  custody values default to 0 / 0 / None on new rows.
+  the account defaults to "特定".
 - A row whose (code, account_type) has no holding yet creates
   one in every mode. When a holding already exists, `mode`
   decides: "skip" leaves it untouched, "overwrite" replaces
   the mapped fields (unmapped fields keep their values), and
-  "add" adds the shares and re-averages the price (lent /
-  ordered / custody are not touched by "add").
+  "add" adds the shares and re-averages the price.
 - Every creation and change is recorded in holding_events with
   kind "import" and source_type "import" (source_id NULL), the
   natural extension of the manual events (kind add/delete,
@@ -69,18 +66,12 @@ FULL_MAPPING = {
     "account_type_col": "口座",
     "avg_price_col": "平均取得単価",
     "shares_col": "株数",
-    "lent_shares_col": "貸株数",
-    "ordered_shares_col": "発注数",
-    "custody_type_col": "保管区分",
 }
 NUMBER_MAPPING = {
     "code_col": "1",
     "account_type_col": "2",
     "avg_price_col": "3",
     "shares_col": "4",
-    "lent_shares_col": "5",
-    "ordered_shares_col": "6",
-    "custody_type_col": "7",
 }
 
 
@@ -110,13 +101,12 @@ def _seed_stock(db, code="9999", name="テスト銘柄"):
 
 
 def _seed_holding(db, code="9999", account_type="特定", avg_price=800,
-                  shares=100, lent=0, ordered=0, custody=None):
+                  shares=100):
     _seed_stock(db, code)
     db.execute(
-        "INSERT INTO holdings(code, account_type, custody_type, avg_price,"
-        " shares, lent_shares, ordered_shares)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s)",
-        (code, account_type, custody, avg_price, shares, lent, ordered),
+        "INSERT INTO holdings(code, account_type, avg_price, shares)"
+        " VALUES (%s, %s, %s, %s)",
+        (code, account_type, avg_price, shares),
     )
     db.commit()
 
@@ -177,13 +167,9 @@ def test_import_utf8_by_header_names(client, db):
     h = _holding(db)
     assert h["shares"] == 100
     assert float(h["avg_price"]) == 800.0
-    assert h["lent_shares"] == 10
-    assert h["ordered_shares"] == 2
-    assert h["custody_type"] == "保護"
     h2 = _holding(db, "1111", "NISA")
     assert h2["shares"] == 200
     assert float(h2["avg_price"]) == 1500.0
-    assert h2["custody_type"] is None
     events = _events(db)
     assert len(events) == 1
     e = events[0]
@@ -217,9 +203,7 @@ def test_import_by_column_numbers(client, db):
     assert r.json()["added"] == 1
     h = _holding(db)
     assert h["shares"] == 100
-    assert h["lent_shares"] == 10
-    assert h["ordered_shares"] == 2
-    assert h["custody_type"] == "保護"
+    assert float(h["avg_price"]) == 800.0
 
 
 def test_import_mixed_header_and_number_mapping(client, db):
@@ -244,9 +228,6 @@ def test_import_minimal_mapping_defaults(client, db):
     h = _holding(db)  # no account mapping: 特定 by default
     assert h is not None
     assert h["shares"] == 100
-    assert h["lent_shares"] == 0
-    assert h["ordered_shares"] == 0
-    assert h["custody_type"] is None
 
 
 def test_import_empty_account_cell_defaults_to_tokutei(client, db):
@@ -321,12 +302,9 @@ def test_import_default_mode_is_skip(client, db):
 
 
 def test_import_overwrite_mode_replaces_mapped_fields(client, db):
-    _seed_holding(db, lent=5, custody="保護")
-    mapping = {
-        k: v for k, v in FULL_MAPPING.items() if k != "custody_type_col"
-    }
+    _seed_holding(db)
     data = _csv(["9999,特定,950,200,7,1,"])
-    r = _import(client, data, mapping, mode="overwrite")
+    r = _import(client, data, FULL_MAPPING, mode="overwrite")
     assert r.status_code == 200
     body = r.json()
     assert body["added"] == 0
@@ -335,10 +313,6 @@ def test_import_overwrite_mode_replaces_mapped_fields(client, db):
     h = _holding(db)
     assert h["shares"] == 200
     assert float(h["avg_price"]) == 950.0
-    assert h["lent_shares"] == 7
-    assert h["ordered_shares"] == 1
-    # custody was not mapped: the existing value survives.
-    assert h["custody_type"] == "保護"
     events = _events(db)
     assert len(events) == 1
     e = events[0]
@@ -352,7 +326,7 @@ def test_import_overwrite_mode_replaces_mapped_fields(client, db):
 
 
 def test_import_add_mode_merges_with_weighted_average(client, db):
-    _seed_holding(db, lent=5)  # 100 @ 800
+    _seed_holding(db)  # 100 @ 800
     data = _csv(["9999,特定,1000,100,3,0,"])
     r = _import(client, data, FULL_MAPPING, mode="add")
     assert r.status_code == 200
@@ -362,9 +336,6 @@ def test_import_add_mode_merges_with_weighted_average(client, db):
     h = _holding(db)
     assert h["shares"] == 200
     assert float(h["avg_price"]) == 900.0
-    # "add" merges shares and price only: lent shares stay as
-    # they were even though the CSV row carries a value.
-    assert h["lent_shares"] == 5
     events = _events(db)
     assert len(events) == 1
     e = events[0]
@@ -604,7 +575,7 @@ def test_import_row_value_edge_cases(client, db):
     data = _csv([
         "1111,特定,abc,100,0,0,",    # row 2: price not a number
         "2222,特定,500,-5,0,0,",     # row 3: negative shares
-        "3333,特定,500,100,,,",      # row 4: blank lent / ordered
+        "3333,特定,500,100,,,",      # row 4: blank trailing cells
         "1111,特定,-100,100,0,0,",   # row 5: negative price
         "2222,特定,NaN,100,0,0,",    # row 6: non-finite price
     ])
@@ -615,10 +586,10 @@ def test_import_row_value_edge_cases(client, db):
     assert body["failed"] == 4
     assert [f["row"] for f in body["failures"]] == [2, 3, 5, 6]
     assert all(f["reason"] for f in body["failures"])
-    # Blank auxiliary counts import as 0, like unmapped ones.
+    # Row 4's blank trailing cells belong to unmapped columns
+    # and do not stop the row from importing.
     h = _holding(db, "3333")
-    assert h["lent_shares"] == 0
-    assert h["ordered_shares"] == 0
+    assert h["shares"] == 100
     assert _holding(db, "1111") is None
     assert _holding(db, "2222") is None
 
@@ -702,8 +673,7 @@ def test_dashboard_import_controls(client, db):
     assert 'type="file"' in page
     assert 'name="file"' in page
     for field in ("code_col", "account_type_col", "avg_price_col",
-                  "shares_col", "lent_shares_col", "ordered_shares_col",
-                  "custody_type_col", "mode"):
+                  "shares_col", "mode"):
         assert f'name="{field}"' in page, field
     for value in ("overwrite", "skip", "add"):
         assert f'value="{value}"' in page, value

@@ -359,8 +359,8 @@ def test_data_page_date_cells_use_nowrap_class(client, db):
         " VALUES ('9999', 'テスト銘柄', '東証')"
     )
     db.execute(
-        "INSERT INTO price_points(code, captured_at, price, source)"
-        " VALUES ('9999', '2026-11-25 09:30:00+09', 1000, 'test')"
+        "INSERT INTO price_points(code, captured_at, price)"
+        " VALUES ('9999', '2026-11-25 09:30:00+09', 1000)"
     )
     db.execute(
         "INSERT INTO daily_snapshots(code, snap_date, close_price)"

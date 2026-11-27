@@ -120,9 +120,6 @@
       <label>口座区分の列 <input type="text" name="account_type_col" placeholder="口座"></label>
       <label>平均取得単価の列 <input type="text" name="avg_price_col" placeholder="平均取得単価"></label>
       <label>株数の列 <input type="text" name="shares_col" placeholder="株数"></label>
-      <label>貸株数の列 <input type="text" name="lent_shares_col" placeholder="貸株数"></label>
-      <label>発注数の列 <input type="text" name="ordered_shares_col" placeholder="発注数"></label>
-      <label>保管区分の列 <input type="text" name="custody_type_col" placeholder="保管区分"></label>
       <label>既存の保有と重なった行
         <select name="mode">
           <option value="overwrite">上書き（CSVの値で置き換え）</option>
@@ -274,8 +271,7 @@
       const fd = new FormData(importForm);
       // Empty mapping inputs are left out entirely: an unmapped item
       // is different from one mapped to an empty name.
-      ['account_type_col', 'avg_price_col', 'shares_col', 'lent_shares_col',
-       'ordered_shares_col', 'custody_type_col'].forEach(name => {
+      ['account_type_col', 'avg_price_col', 'shares_col'].forEach(name => {
         if (!(fd.get(name) || '').trim()) fd.delete(name);
       });
       const r = await fetch('/api/v1/holdings/import', {method: 'POST', body: fd});

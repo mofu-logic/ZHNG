@@ -245,15 +245,12 @@ def test_sale_outside_allowlist_zero_executed_is_422(client, db):
 
 # ------------------------------------------------------- CSV import
 
-IMPORT_HEADER = "コード,口座,平均取得単価,株数,貸株数,発注数,保管区分"
+IMPORT_HEADER = "コード,口座,平均取得単価,株数"
 IMPORT_MAPPING = {
     "code_col": "コード",
     "account_type_col": "口座",
     "avg_price_col": "平均取得単価",
     "shares_col": "株数",
-    "lent_shares_col": "貸株数",
-    "ordered_shares_col": "発注数",
-    "custody_type_col": "保管区分",
 }
 
 
@@ -268,7 +265,7 @@ def _import(client, rows):
 
 def test_import_futsu_row(client, db):
     _seed_stock(db)
-    r = _import(client, ["9999,普通,800,100,0,0,"])
+    r = _import(client, ["9999,普通,800,100"])
     assert r.status_code == 200
     body = r.json()
     assert body["added"] == 1
@@ -281,9 +278,9 @@ def test_import_outside_allowlist_row_fails_others_still_import(client, db):
     _seed_stock(db, "1111", "別銘柄")
     _seed_stock(db, "2222", "第三銘柄")
     r = _import(client, [
-        "9999,特定,800,100,0,0,",      # row 2: ok
-        "1111,新NISA,900,50,0,0,",     # row 3: outside the allowlist
-        "2222,普通,700,30,0,0,",       # row 4: ok
+        "9999,特定,800,100",           # row 2: ok
+        "1111,新NISA,900,50",          # row 3: outside the allowlist
+        "2222,普通,700,30",            # row 4: ok
     ])
     assert r.status_code == 200
     body = r.json()

@@ -272,7 +272,6 @@ def dashboard(request: Request):
               FROM price_points ORDER BY code, captured_at DESC
             )
             SELECT h.id, h.code, h.account_type, h.avg_price, h.shares,
-                   h.lent_shares, h.ordered_shares,
                    s.name, s.market,
                    d.dividend_forecast, d.benefit_value, d.judgment_note,
                    l.price AS cur_price, l.captured_at AS price_at,
@@ -619,8 +618,7 @@ def _buy_out(r):
 def _sale_out(r):
     return dict(
         id=r["id"], code=r["code"], name=r["name"],
-        buy_price=fnum(r["buy_price"]), shares=r["shares"],
-        purchase_date=_date_out(r["purchase_date"]),
+        buy_price=fnum(r["buy_price"]),
         sell_price=fnum(r["sell_price"]), sell_shares=r["sell_shares"],
         executed_shares=r["executed_shares"],
         order_start_date=_date_out(r["order_start_date"]),
@@ -637,7 +635,6 @@ def _benefit_out(r):
         dividend_auto=fnum(r["dividend_auto"]),
         benefit_value=fnum(r["benefit_value"]),
         benefit_desc=r["benefit_desc"],
-        info_updated_on=_date_out(r["info_updated_on"]),
         funding_target=r["funding_target"],
         judgment_on=_date_out(r["judgment_on"]),
         judgment_note=r["judgment_note"],
@@ -649,9 +646,8 @@ def _benefit_out(r):
 def _holding_out(r):
     return dict(
         id=r["id"], code=r["code"], name=r.get("name"),
-        account_type=r["account_type"], custody_type=r["custody_type"],
+        account_type=r["account_type"],
         avg_price=fnum(r["avg_price"]), shares=r["shares"],
-        lent_shares=r["lent_shares"], ordered_shares=r["ordered_shares"],
     )
 
 
@@ -705,8 +701,6 @@ class SaleIn(BaseModel):
                                            min_length=1)]
     name: str | None = None
     buy_price: float | None = Field(default=None, ge=0)
-    shares: int | None = Field(default=None, ge=0)
-    purchase_date: date | None = None
     sell_price: float | None = Field(default=None, ge=0)
     sell_shares: int | None = Field(default=None, ge=0)
     executed_shares: int | None = Field(default=None, ge=0)
@@ -770,8 +764,6 @@ class SaleOut(BaseModel):
     code: str | None
     name: str | None
     buy_price: float | None
-    shares: int | None
-    purchase_date: date | None
     sell_price: float | None
     sell_shares: int | None
     executed_shares: int | None
@@ -791,7 +783,6 @@ class BenefitOut(BaseModel):
     dividend_auto: float | None
     benefit_value: float | None
     benefit_desc: str | None
-    info_updated_on: date | None
     funding_target: bool | None
     judgment_on: date | None
     judgment_note: str | None
@@ -1003,9 +994,6 @@ class HoldingIn(BaseModel):
                                                    min_length=1)]
     avg_price: float = Field(ge=0)
     shares: int = Field(ge=0)
-    lent_shares: int = Field(default=0, ge=0)
-    ordered_shares: int = Field(default=0, ge=0)
-    custody_type: str | None = None
 
     @field_validator("account_type")
     @classmethod
@@ -1018,11 +1006,8 @@ class HoldingOut(BaseModel):
     code: str
     name: str | None
     account_type: str
-    custody_type: str | None
     avg_price: float | None
     shares: int
-    lent_shares: int
-    ordered_shares: int
 
 
 class HoldingEventOut(BaseModel):
@@ -1088,9 +1073,6 @@ def api_holdings_create(payload: HoldingIn):
         row = create_holding(
             conn, code=code, account_type=payload.account_type,
             avg_price=payload.avg_price, shares=payload.shares,
-            lent_shares=payload.lent_shares,
-            ordered_shares=payload.ordered_shares,
-            custody_type=payload.custody_type,
         )
         conn.commit()
         out = _holding_out(get_holding(conn, row["id"]))
@@ -1106,9 +1088,6 @@ def api_holdings_import(
     account_type_col: str | None = Form(None),
     avg_price_col: str | None = Form(None),
     shares_col: str | None = Form(None),
-    lent_shares_col: str | None = Form(None),
-    ordered_shares_col: str | None = Form(None),
-    custody_type_col: str | None = Form(None),
     mode: str = Form("skip"),
 ):
     if mode not in ("overwrite", "skip", "add"):
@@ -1121,9 +1100,6 @@ def api_holdings_import(
         "account_type": account_type_col,
         "avg_price": avg_price_col,
         "shares": shares_col,
-        "lent_shares": lent_shares_col,
-        "ordered_shares": ordered_shares_col,
-        "custody_type": custody_type_col,
     }
     mapping = {
         field: specs[field].strip()
@@ -1530,7 +1506,7 @@ def data_page(request: Request):
         ).fetchall()
         prices = conn.execute(
             """
-            SELECT DISTINCT ON (p.code) p.code, s.name, p.price, p.captured_at, p.source
+            SELECT DISTINCT ON (p.code) p.code, s.name, p.price, p.captured_at
             FROM price_points p LEFT JOIN stocks s ON s.code = p.code
             ORDER BY p.code, p.captured_at DESC
             """
