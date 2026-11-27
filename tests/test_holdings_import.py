@@ -41,6 +41,10 @@ in test_holdings_crud.py):
   source_type manual): creations go from (0, NULL) to the new
   state, changes carry the before/after state and the share
   delta. Skipped rows record no event.
+- Import events take part in the cancellation stacking rule like
+  any other change on the holding: once an import lands on top of
+  a buy linkage, cancelling that buy is a 409 and the holding
+  keeps its imported state.
 - The answer is 200 with the summary
   {"added", "updated", "skipped", "failed", "failures"}, where
   "failures" lists {"row", "reason"} per failed row and
@@ -617,6 +621,71 @@ def test_import_row_value_edge_cases(client, db):
     assert h["ordered_shares"] == 0
     assert _holding(db, "1111") is None
     assert _holding(db, "2222") is None
+
+
+# ------------------------------------------------- stacking with trades
+# An import event is a later change on the holding like any other:
+# once an import lands on top of a buy linkage, cancelling that buy
+# is blocked (409) and the holding keeps its imported state.
+
+
+def _buy_linked(client, **over):
+    payload = {
+        "code": "9999",
+        "name": "テスト銘柄",
+        "avg_price": 1000,
+        "shares": 100,
+        "purchase_date": "2026-11-20",
+        "status": "約定済",
+        "account_type": "特定",
+    }
+    payload.update(over)
+    return client.post("/api/v1/buys", json=payload)
+
+
+def test_import_overwrite_blocks_cancel_of_underlying_buy(client, db):
+    _seed_stock(db)
+    buy_id = _buy_linked(client).json()["id"]
+    assert _holding(db)["shares"] == 100
+
+    data = _csv(["9999,特定,1200,150,0,0,"])
+    r = _import(client, data, FULL_MAPPING, mode="overwrite")
+    assert r.status_code == 200
+    assert r.json()["updated"] == 1
+    h = _holding(db)
+    assert h["shares"] == 150
+    assert float(h["avg_price"]) == 1200.0
+
+    # The import is the latest change on this holding, so the buy
+    # underneath it can no longer be cancelled.
+    assert client.post(f"/api/v1/buys/{buy_id}/cancel").status_code == 409
+    h = _holding(db)
+    assert h["shares"] == 150
+    assert float(h["avg_price"]) == 1200.0
+    buys = {b["id"]: b for b in client.get("/api/v1/buys").json()}
+    assert buys[buy_id]["cancelled_at"] is None
+    assert [e["kind"] for e in _events(db)] == ["buy", "import"]
+
+
+def test_import_add_blocks_cancel_of_underlying_buy(client, db):
+    _seed_stock(db)
+    buy_id = _buy_linked(client).json()["id"]
+
+    data = _csv(["9999,特定,500,100,0,0,"])
+    r = _import(client, data, FULL_MAPPING, mode="add")
+    assert r.status_code == 200
+    assert r.json()["updated"] == 1
+    h = _holding(db)
+    assert h["shares"] == 200
+    assert float(h["avg_price"]) == 750.0
+
+    assert client.post(f"/api/v1/buys/{buy_id}/cancel").status_code == 409
+    h = _holding(db)
+    assert h["shares"] == 200
+    assert float(h["avg_price"]) == 750.0
+    buys = {b["id"]: b for b in client.get("/api/v1/buys").json()}
+    assert buys[buy_id]["cancelled_at"] is None
+    assert [e["kind"] for e in _events(db)] == ["buy", "import"]
 
 
 # ---------------------------------------------------------------- page
