@@ -120,19 +120,19 @@ def test_exporter_boilerplate_and_failures(db, monkeypatch):
         raise RuntimeError("print failed")
 
     monkeypatch.setattr("builtins.print", boom)
-    from opentelemetry.sdk._logs.export import LogExportResult
+    from opentelemetry.sdk._logs.export import LogRecordExportResult
 
-    assert out.export([_fake_record()]) == LogExportResult.FAILURE
+    assert out.export([_fake_record()]) == LogRecordExportResult.FAILURE
     monkeypatch.undo()
 
     # DB exporter against an unreachable database fails soft.
     bad = DbLogExporter("postgresql://stock:x@127.0.0.1:1/nope")
-    assert bad.export([_fake_record()]) == LogExportResult.FAILURE
+    assert bad.export([_fake_record()]) == LogRecordExportResult.FAILURE
     bad.shutdown()
     assert bad.force_flush() is True
 
     good = DbLogExporter(main.DATABASE_URL)
-    assert good.export([_fake_record(body="exporter.ok")]) == LogExportResult.SUCCESS
+    assert good.export([_fake_record(body="exporter.ok")]) == LogRecordExportResult.SUCCESS
     assert len(_rows(db, "exporter.ok")) == 1
 
 
