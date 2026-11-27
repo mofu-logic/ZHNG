@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="sub">現在値：{% if price_at %}{{ price_at.strftime('%Y/%m/%d %H:%M') }} 時点{% else %}未取得{% endif %}（夜間バッチ 1:00 JST ＋ 手動取得）</div>
+<div class="sub">現在値：{% if price_at %}{{ price_at.strftime('%Y/%m/%d %H:%M') }} 時点{% else %}未取得{% endif %}（夜間バッチ {{ fetch_start_time }} JST ＋ 手動取得）</div>
 
 <div class="kpis">
   <div class="kpi"><div class="k">保有株 評価額合計<span class="help" tabindex="0" data-tip="保有している全銘柄について「現在値 × 保有株数」を合計した、今の時価での評価額です。">?</span></div><div class="v">¥{{ kpi.total_value|yen }}</div><div class="t">{{ kpi.count }}銘柄</div></div>
