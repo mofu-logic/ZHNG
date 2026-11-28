@@ -22,3 +22,6 @@ __pycache__/
 .coverage
 htmlcov/
 .pytest_cache/
+
+# e2e (Playwright) artifacts: failure screenshots, server log
+tests_e2e/artifacts/
