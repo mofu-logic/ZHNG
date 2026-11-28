@@ -103,16 +103,15 @@
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({code}),
       });
+      const d = await r.json().catch(() => ({}));
       if (r.status === 201) {
-        const created = await r.json().catch(() => ({}));
         await showDialog({
           title: '登録しました',
-          message: created.code + ' ' + created.name + ' を登録しました。',
+          message: d.code + ' ' + d.name + ' を登録しました。',
         });
         location.reload();
         return;
       }
-      const d = await r.json().catch(() => ({}));
       await showDialog({
         title: r.status === 409 ? '登録済みの銘柄です' : '登録できませんでした',
         message: d.detail || ('エラーが発生しました（' + r.status + '）'),
