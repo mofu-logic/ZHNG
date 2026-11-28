@@ -55,6 +55,17 @@
   </table>
   <div class="sub">優待メモの期限までの残り日数がこの日数以下（期限切れを含む）になると、サマリーと優待メモの画面上部にアラートを表示します。</div>
 
+  <h3 style="margin-top:22px">操作</h3>
+  <table>
+    <tbody>
+      <tr>
+        <td>削除・取消の前に確認ダイアログを表示する</td>
+        <td><input type="checkbox" name="confirm_dialogs_enabled" {% if confirm_dialogs_enabled %}checked{% endif %}></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="sub">保有の削除、売買履歴の取消・削除、購入候補の削除を実行する前に、確認ダイアログを表示します。オフにすると確認なしでそのまま実行されます（結果のダイアログは表示されます）。</div>
+
   <h3 style="margin-top:22px">ログ</h3>
   <table>
     <tbody>
@@ -113,6 +124,7 @@
       otel_enabled: form.querySelector('[name="otel_enabled"]').checked,
       otel_endpoint: strOrNull(f.get('otel_endpoint')),
       swagger_enabled: form.querySelector('[name="swagger_enabled"]').checked,
+      confirm_dialogs_enabled: form.querySelector('[name="confirm_dialogs_enabled"]').checked,
       fetch_start_time: f.get('fetch_start_time'),
       benefit_deadline_alert_days: Number(f.get('benefit_deadline_alert_days')),
     });

@@ -31,7 +31,7 @@
       <td class="nowrap"><span class="tag">{{ b.status }}</span></td>
       <td>
         {% if not b.cancelled_at %}<button type="button" class="cancelbtn" data-cancel="buys" data-id="{{ b.id }}">取消</button>{% endif %}
-        <button type="button" class="delbtn" data-del="buys" data-id="{{ b.id }}">削除</button>
+        <button type="button" class="delbtn" data-del="buys" data-id="{{ b.id }}" data-code="{{ b.code or '' }}" data-name="{{ b.name or '' }}">削除</button>
       </td>
     </tr>
   {% endfor %}
@@ -65,7 +65,7 @@
       <td>{{ memo_tip(s.memo) }}</td>
       <td>
         {% if not s.cancelled_at %}<button type="button" class="cancelbtn" data-cancel="sales" data-id="{{ s.id }}">取消</button>{% endif %}
-        <button type="button" class="delbtn" data-del="sales" data-id="{{ s.id }}">削除</button>
+        <button type="button" class="delbtn" data-del="sales" data-id="{{ s.id }}" data-code="{{ s.code or '' }}" data-name="{{ s.name or '' }}">削除</button>
       </td>
     </tr>
   {% endfor %}
@@ -149,10 +149,11 @@
 
 <script>
   // Writes go through the JSON API (/api/v1), same as external clients.
+  const CONFIRM_DIALOGS_ENABLED = {{ confirm_dialogs_enabled|tojson }};
   document.getElementById('buy-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
-    await apiJson('POST', '/api/v1/buys', {
+    const d = await apiJson('POST', '/api/v1/buys', {
       code: strOrNull(f.get('code')),
       account_type: strOrNull(f.get('account_type')),
       avg_price: numOrNull(f.get('avg_price')), shares: intOrNull(f.get('shares')),
@@ -160,12 +161,16 @@
       trigger_note: strOrNull(f.get('trigger_note')), note: strOrNull(f.get('note')),
       status: f.get('status'),
     });
+    await showDialog({
+      title: '追加しました',
+      message: d.code + ' ' + d.name + ' の購入を追加しました。',
+    });
     location.reload();
   });
   document.getElementById('sell-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
-    await apiJson('POST', '/api/v1/sales', {
+    const d = await apiJson('POST', '/api/v1/sales', {
       code: strOrNull(f.get('code')),
       account_type: strOrNull(f.get('account_type')),
       sell_price: numOrNull(f.get('sell_price')), sell_shares: intOrNull(f.get('sell_shares')),
@@ -175,19 +180,29 @@
       status: f.get('status'),
       memo: strOrNull(f.get('memo')),
     });
+    await showDialog({
+      title: '追加しました',
+      message: d.code + ' ' + d.name + ' の売却を追加しました。',
+    });
     location.hash = 'sell';
     location.reload();
   });
   document.querySelectorAll('[data-cancel]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const label = btn.dataset.cancel === 'buys' ? '購入' : '売却';
-      const ok = await showDialog({
-        title: label + '履歴の取消',
-        message: 'この' + label + '履歴を取り消しますか？保有への反映も元に戻ります。',
-        okText: '取り消す', cancelText: 'キャンセル', danger: true,
+      if (CONFIRM_DIALOGS_ENABLED) {
+        const ok = await showDialog({
+          title: label + '履歴の取消',
+          message: 'この' + label + '履歴を取り消しますか？保有への反映も元に戻ります。',
+          okText: '取り消す', cancelText: 'キャンセル', danger: true,
+        });
+        if (!ok) return;
+      }
+      const d = await apiJson('POST', '/api/v1/' + btn.dataset.cancel + '/' + btn.dataset.id + '/cancel', undefined, '取り消しできませんでした');
+      await showDialog({
+        title: '取り消しました',
+        message: d.code + ' ' + d.name + ' の' + label + 'を取り消しました。',
       });
-      if (!ok) return;
-      await apiJson('POST', '/api/v1/' + btn.dataset.cancel + '/' + btn.dataset.id + '/cancel', undefined, '取り消しできませんでした');
       if (btn.dataset.cancel === 'sales') location.hash = 'sell';
       location.reload();
     });
@@ -195,8 +210,12 @@
   document.querySelectorAll('[data-del]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const label = btn.dataset.del === 'buys' ? '購入' : '売却';
-      if (!confirm('この' + label + '履歴を削除しますか？')) return;
+      if (CONFIRM_DIALOGS_ENABLED && !confirm('この' + label + '履歴を削除しますか？')) return;
       await apiJson('DELETE', '/api/v1/' + btn.dataset.del + '/' + btn.dataset.id, undefined, '削除できませんでした');
+      await showDialog({
+        title: '削除しました',
+        message: btn.dataset.code + ' ' + btn.dataset.name + ' の' + label + 'を削除しました。',
+      });
       if (btn.dataset.del === 'sales') location.hash = 'sell';
       location.reload();
     });

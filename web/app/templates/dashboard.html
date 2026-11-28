@@ -83,7 +83,7 @@
       <td class="nowrap">{{ i.policy or '' }}</td>
       <td class="date">{{ i.purchase_date or '' }}</td>
       <td class="memo">{{ i.judgment_note or '' }}</td>
-      <td class="nowrap"><button type="button" class="delbtn" style="color:#20304d" data-holding-history="{{ i.id }}" data-name="{{ i.name }}">履歴</button> <button type="button" class="delbtn" data-holding-delete="{{ i.id }}" data-name="{{ i.name }}" data-account="{{ i.account_type or '' }}">削除</button></td>
+      <td class="nowrap"><button type="button" class="delbtn" style="color:#20304d" data-holding-history="{{ i.id }}" data-name="{{ i.name }}">履歴</button> <button type="button" class="delbtn" data-holding-delete="{{ i.id }}" data-code="{{ i.code }}" data-name="{{ i.name }}" data-account="{{ i.account_type or '' }}">削除</button></td>
     </tr>
   {% endfor %}
   </tbody>
@@ -180,6 +180,7 @@
 <script>
   // Manual holding registration / deletion / event history.
   // Writes go through the JSON API (/api/v1), same as external clients.
+  const CONFIRM_DIALOGS_ENABLED = {{ confirm_dialogs_enabled|tojson }};
   const addOverlay = document.getElementById('holding-add-overlay');
   const addForm = document.getElementById('holding-add-form');
   const openAdd = () => {
@@ -206,7 +207,15 @@
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(values),
     });
-    if (r.ok) { location.reload(); return; }
+    if (r.ok) {
+      const d = await r.json().catch(() => ({}));
+      await showDialog({
+        title: '追加しました',
+        message: d.code + ' ' + d.name + ' を追加しました。',
+      });
+      location.reload();
+      return;
+    }
     const d = await r.json().catch(() => ({}));
     await showDialog({
       title: '追加できませんでした',
@@ -216,14 +225,23 @@
 
   document.querySelectorAll('[data-holding-delete]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const ok = await showDialog({
-        title: '保有の削除',
-        message: btn.dataset.name + '（' + btn.dataset.account + '）の保有を削除しますか？',
-        okText: '削除する', cancelText: 'キャンセル', danger: true,
-      });
-      if (!ok) return;
+      if (CONFIRM_DIALOGS_ENABLED) {
+        const ok = await showDialog({
+          title: '保有の削除',
+          message: btn.dataset.name + '（' + btn.dataset.account + '）の保有を削除しますか？',
+          okText: '削除する', cancelText: 'キャンセル', danger: true,
+        });
+        if (!ok) return;
+      }
       const r = await fetch('/api/v1/holdings/' + btn.dataset.holdingDelete, {method: 'DELETE'});
-      if (r.ok) { location.reload(); return; }
+      if (r.ok) {
+        await showDialog({
+          title: '削除しました',
+          message: btn.dataset.code + ' ' + btn.dataset.name + ' を削除しました。',
+        });
+        location.reload();
+        return;
+      }
       const d = await r.json().catch(() => ({}));
       await showDialog({
         title: '削除できませんでした',

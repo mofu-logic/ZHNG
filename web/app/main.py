@@ -264,7 +264,9 @@ async def request_logging(request: Request, call_next):
 def dashboard(request: Request):
     with db() as conn:
         st = get_settings(conn)
-        fetch_start_time = app_config(conn)["fetch_start_time"]
+        config = app_config(conn)
+        fetch_start_time = config["fetch_start_time"]
+        confirm_dialogs_enabled = config["confirm_dialogs_enabled"]
         rows = conn.execute(
             """
             WITH latest AS (
@@ -342,7 +344,8 @@ def dashboard(request: Request):
         request,
         "dashboard.html",
         dict(items=items, kpi=kpi, price_at=price_at, policies=policies, accounts=accounts,
-             fetch_start_time=fetch_start_time, account_types=ACCOUNT_TYPES),
+             fetch_start_time=fetch_start_time, account_types=ACCOUNT_TYPES,
+             confirm_dialogs_enabled=confirm_dialogs_enabled),
     )
 
 
@@ -520,9 +523,11 @@ def history(request: Request):
         sales = conn.execute(
             "SELECT * FROM sales ORDER BY order_start_date DESC NULLS LAST, id DESC"
         ).fetchall()
+        confirm_dialogs_enabled = app_config(conn)["confirm_dialogs_enabled"]
     return templates.TemplateResponse(
         request, "history.html",
-        dict(buys=buys, sales=sales, account_types=ACCOUNT_TYPES),
+        dict(buys=buys, sales=sales, account_types=ACCOUNT_TYPES,
+             confirm_dialogs_enabled=confirm_dialogs_enabled),
     )
 
 
@@ -718,6 +723,7 @@ class SettingsIn(BaseModel):
     otel_enabled: bool = False
     otel_endpoint: str | None = None
     swagger_enabled: bool = False
+    confirm_dialogs_enabled: bool = True
     fetch_start_time: str = Field(
         default=DEFAULT_FETCH_START_TIME, pattern=FETCH_START_TIME_PATTERN
     )
@@ -783,6 +789,7 @@ class SettingsOut(BaseModel):
     otel_enabled: bool
     otel_endpoint: str
     swagger_enabled: bool
+    confirm_dialogs_enabled: bool
     fetch_start_time: str
     benefit_deadline_alert_days: int
 
@@ -1379,6 +1386,7 @@ class CandidateUpdateIn(BaseModel):
 def candidates_page(request: Request):
     with db() as conn:
         rows = [_candidate_out(r) for r in list_candidate_rows(conn)]
+        confirm_dialogs_enabled = app_config(conn)["confirm_dialogs_enabled"]
     editor = {
         r["code"]: dict(policy=r["policy"], memo=r["memo"],
                         target_price=r["target_price"])
@@ -1386,7 +1394,8 @@ def candidates_page(request: Request):
     }
     return templates.TemplateResponse(
         request, "candidates.html",
-        dict(rows=rows, editor=editor),
+        dict(rows=rows, editor=editor,
+             confirm_dialogs_enabled=confirm_dialogs_enabled),
     )
 
 

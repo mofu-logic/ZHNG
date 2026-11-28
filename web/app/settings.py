@@ -1,7 +1,7 @@
 """設定まわりのサービス層。
 
 数値設定（KPI）とアプリ設定（ログ保持期間・OTel・Swagger・
-夜間バッチ開始時刻・優待期限アラート日数）の読み書き。月あたり所得の目標はここで
+夜間バッチ開始時刻・優待期限アラート日数・確認ダイアログ）の読み書き。月あたり所得の目標はここで
 自動算出する（直接入力した値を保存しない）。
 
 formatting.py（round_half_up）と config.py にのみ依存する
@@ -56,6 +56,7 @@ def update_settings(conn, *, tax_rate_pct, target_dividend_total,
                     target_yield_portfolio_pct, log_retention_days=90,
                     otel_enabled=False, otel_endpoint=None,
                     swagger_enabled=False,
+                    confirm_dialogs_enabled=True,
                     fetch_start_time=DEFAULT_FETCH_START_TIME,
                     benefit_deadline_alert_days=(
                         DEFAULT_BENEFIT_DEADLINE_ALERT_DAYS)):
@@ -83,6 +84,8 @@ def update_settings(conn, *, tax_rate_pct, target_dividend_total,
         ("otel_enabled", "true" if otel_enabled else "false"),
         ("otel_endpoint", otel_endpoint or ""),
         ("swagger_enabled", "true" if swagger_enabled else "false"),
+        ("confirm_dialogs_enabled",
+         "true" if confirm_dialogs_enabled else "false"),
         ("fetch_start_time", fetch_start_time),
     ):
         conn.execute(
@@ -92,6 +95,7 @@ def update_settings(conn, *, tax_rate_pct, target_dividend_total,
         )
     values["otel_enabled"] = bool(otel_enabled)
     values["swagger_enabled"] = bool(swagger_enabled)
+    values["confirm_dialogs_enabled"] = bool(confirm_dialogs_enabled)
     values["fetch_start_time"] = fetch_start_time
     return values
 
@@ -108,8 +112,8 @@ def _raw_setting(conn, key):
 
 def app_config(conn):
     """The non-KPI app settings: log retention, OTel integration,
-    Swagger, the nightly fetch start time, and the benefit deadline
-    alert threshold."""
+    Swagger, the nightly fetch start time, the benefit deadline
+    alert threshold, and the confirmation-dialog switch."""
     retention = _raw_setting(conn, "log_retention_days")
     try:
         retention_days = (
@@ -134,6 +138,9 @@ def app_config(conn):
         otel_enabled=_raw_setting(conn, "otel_enabled") == "true",
         otel_endpoint=_raw_setting(conn, "otel_endpoint") or "",
         swagger_enabled=_raw_setting(conn, "swagger_enabled") == "true",
+        confirm_dialogs_enabled=(
+            _raw_setting(conn, "confirm_dialogs_enabled") != "false"
+        ),
         fetch_start_time=(
             stored_start_time
             if is_valid_fetch_start_time(stored_start_time)
