@@ -112,6 +112,7 @@
   .switch:checked { background: var(--color-navy); }
   .switch:checked::after { transform: translateX(calc(var(--switch-w) - var(--switch-knob) - 2 * var(--switch-pad))); }
   .switch:focus-visible { outline: 2px solid var(--color-navy-mid); outline-offset: 2px; }
+  .switch-cell { text-align: right; padding-right: 53px; }
   input[type="checkbox"]:not(.switch) { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; margin: 0; border: 1.5px solid var(--color-border-input); border-radius: var(--radius-sm); background: var(--color-surface); display: inline-grid; place-content: center; vertical-align: middle; cursor: pointer; flex: none; transition: background var(--motion-fast), border-color var(--motion-fast); }
   input[type="checkbox"]:not(.switch):checked { background: var(--color-navy); border-color: var(--color-navy); }
   input[type="checkbox"]:not(.switch):checked::after { content: ""; width: 5px; height: 10px; border: solid var(--color-surface); border-width: 0 2.5px 2.5px 0; transform: rotate(45deg); }
