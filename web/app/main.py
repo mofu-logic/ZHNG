@@ -264,10 +264,9 @@ async def request_logging(request: Request, call_next):
 def dashboard(request: Request):
     with db() as conn:
         st = get_settings(conn)
-        fetch_start_time = app_config(conn)["fetch_start_time"]
-        confirm_dialogs_enabled = app_config(conn)[
-            "confirm_dialogs_enabled"
-        ]
+        config = app_config(conn)
+        fetch_start_time = config["fetch_start_time"]
+        confirm_dialogs_enabled = config["confirm_dialogs_enabled"]
         rows = conn.execute(
             """
             WITH latest AS (
@@ -524,9 +523,7 @@ def history(request: Request):
         sales = conn.execute(
             "SELECT * FROM sales ORDER BY order_start_date DESC NULLS LAST, id DESC"
         ).fetchall()
-        confirm_dialogs_enabled = app_config(conn)[
-            "confirm_dialogs_enabled"
-        ]
+        confirm_dialogs_enabled = app_config(conn)["confirm_dialogs_enabled"]
     return templates.TemplateResponse(
         request, "history.html",
         dict(buys=buys, sales=sales, account_types=ACCOUNT_TYPES,
@@ -1389,9 +1386,7 @@ class CandidateUpdateIn(BaseModel):
 def candidates_page(request: Request):
     with db() as conn:
         rows = [_candidate_out(r) for r in list_candidate_rows(conn)]
-        confirm_dialogs_enabled = app_config(conn)[
-            "confirm_dialogs_enabled"
-        ]
+        confirm_dialogs_enabled = app_config(conn)["confirm_dialogs_enabled"]
     editor = {
         r["code"]: dict(policy=r["policy"], memo=r["memo"],
                         target_price=r["target_price"])
