@@ -46,6 +46,7 @@
 <script>
   // Writes go through the JSON API (/api/v1), same as external clients.
   const EDITOR = {{ editor|tojson }};
+  const CONFIRM_DIALOGS_ENABLED = {{ confirm_dialogs_enabled|tojson }};
   const POLICY_PARTS = ['値上がり', '配当', '優待'];
   const codeInput = document.getElementById('candidate-code');
   const previewEl = document.getElementById('candidate-preview');
@@ -241,16 +242,25 @@
   document.querySelectorAll('[data-del-candidate]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const code = btn.dataset.delCandidate;
-      const ok = await showDialog({
-        title: '購入候補から削除しますか？',
-        message: code + ' ' + (btn.dataset.name || '') + ' を購入候補から削除します。',
-        okText: '削除する',
-        cancelText: 'キャンセル',
-        danger: true,
-      });
-      if (!ok) return;
+      if (CONFIRM_DIALOGS_ENABLED) {
+        const ok = await showDialog({
+          title: '購入候補から削除しますか？',
+          message: code + ' ' + (btn.dataset.name || '') + ' を購入候補から削除します。',
+          okText: '削除する',
+          cancelText: 'キャンセル',
+          danger: true,
+        });
+        if (!ok) return;
+      }
       const r = await fetch('/api/v1/candidates/' + encodeURIComponent(code), {method: 'DELETE'});
-      if (r.status === 204) { location.reload(); return; }
+      if (r.status === 204) {
+        await showDialog({
+          title: '削除しました',
+          message: code + ' ' + btn.dataset.name + ' を削除しました。',
+        });
+        location.reload();
+        return;
+      }
       const d = await r.json().catch(() => ({}));
       await showDialog({
         title: '削除できませんでした',
