@@ -1,0 +1,5 @@
+# e2e（Playwright）専用の依存。通常のテスト用（web/requirements-dev.txt）
+# とは分離し、CI には入れない。アプリ本体の依存（web/requirements.txt）
+# と合わせて入れる。手順は .agents/skills/run-e2e-tests/SKILL.md。
+pytest==9.*
+playwright==1.65.*
