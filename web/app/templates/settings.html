@@ -60,7 +60,7 @@
     <tbody>
       <tr>
         <td>削除・取消の前に確認ダイアログを表示する</td>
-        <td><input type="checkbox" name="confirm_dialogs_enabled" {% if confirm_dialogs_enabled %}checked{% endif %}></td>
+        <td><input type="checkbox" class="switch" name="confirm_dialogs_enabled" {% if confirm_dialogs_enabled %}checked{% endif %}></td>
       </tr>
     </tbody>
   </table>
@@ -82,7 +82,7 @@
     <tbody>
       <tr>
         <td>OTLP/HTTPでログを送信する</td>
-        <td><input type="checkbox" name="otel_enabled" {% if otel_enabled %}checked{% endif %}></td>
+        <td><input type="checkbox" class="switch" name="otel_enabled" {% if otel_enabled %}checked{% endif %}></td>
       </tr>
       <tr>
         <td>エンドポイント（URL）</td>
@@ -97,7 +97,7 @@
     <tbody>
       <tr>
         <td>APIテスト（Swagger UI）</td>
-        <td><input type="checkbox" name="swagger_enabled" {% if swagger_enabled %}checked{% endif %}></td>
+        <td><input type="checkbox" class="switch" name="swagger_enabled" {% if swagger_enabled %}checked{% endif %}></td>
       </tr>
     </tbody>
   </table>
