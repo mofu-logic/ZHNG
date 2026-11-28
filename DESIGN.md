@@ -143,6 +143,8 @@ motion:
   （pill 形）、`::after` をノブとして描く。オフは border-input 色、
   オンは navy で、ノブが右へスライドする。切り替えはトランジション
   （--motion-fast）で動かす。name／checked の契約は変えない。
+  配置は値セル（.switch-cell）で右寄せし、スイッチの右端を
+  行の右端から53pxの位置にそろえる。
 - **チェックボックス**：ダイアログ内の選択肢（複数選択など）用。
   共通CSS（`input[type="checkbox"]:not(.switch)`）で装飾し、画面側に
   クラス追加は不要。border-input の枠＋白面で、チェック時は navy 塗りに
