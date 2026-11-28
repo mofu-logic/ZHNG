@@ -10,9 +10,10 @@
 - アプリは TestClient ではなく、uvicorn の実サーバとして
   セッション専用に起動し、/healthz で起動完了を待つ。
 - テスト中に外部アクセスは発生させない。対象フローは銘柄マスタ
-  登録済みのコードだけで完結させ、夜間バッチの開始時刻はシードで
+  登録済みのコードだけで完結させ、夜間バッチの開始時刻は
   「少し過去」にずらして、実行中はスケジューラが発火しないように
-  する（次回発火は約24時間先になる）。
+  する（次回発火は約24時間先になる）。ガード値はサーバ起動前にも
+  先行投入し、起動直後・初回シード前の窓も閉じる。
 - 失敗時は tests_e2e/artifacts/ にスクリーンショットを残す
   （.gitignore 済み）。
 """
@@ -142,11 +143,34 @@ def db_url():
     return os.environ["DATABASE_URL"]
 
 
+def _guard_fetch_start_time():
+    """夜間バッチ開始時刻のガード値（JST の現在時刻−2分、"HH:MM"）。
+
+    この値を fetch_start_time に入れておくと、スケジューラの次回
+    発火は約24時間先になり、テスト実行中は発火しない（＝Yahoo へ
+    出ない）。サーバ起動前の先行投入と、各テストのシードで共用する。
+    """
+    guard = datetime.now(ZoneInfo("Asia/Tokyo")) - timedelta(minutes=2)
+    return guard.strftime("%H:%M")
+
+
 @pytest.fixture(scope="session")
 def app_server(db_url):
     """アプリを uvicorn の実サーバとして起動する（セッション共有）。"""
     with psycopg.connect(db_url, autocommit=True) as conn:
         conn.execute(SCHEMA)
+        # 初回シードより前にサーバが起動する。settings が空のままだと
+        # スケジューラは既定値（01:00）で次回発火を計算し、起動が
+        # 01:00 直前に重なると初回シードの投入前に発火し得るため、
+        # ガード値を起動前に先行投入する（各テストのシードが後から
+        # 同じ考え方の値で入れ直す）。前回の実行で残った行があっても
+        # 壊れないよう upsert にする。
+        conn.execute(
+            "INSERT INTO settings(key, value)"
+            " VALUES ('fetch_start_time', %s)"
+            " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            (_guard_fetch_start_time(),),
+        )
 
     port = _free_port()
     base_url = f"http://127.0.0.1:{port}"
@@ -252,8 +276,7 @@ def _seed(conn):
     settings = dict(_SEED_SETTINGS)
     # 夜間バッチの開始時刻を「少し過去」に固定し、テスト実行中は
     # スケジューラが発火しない（＝Yahoo へ出ない）ようにする。
-    guard = datetime.now(ZoneInfo("Asia/Tokyo")) - timedelta(minutes=2)
-    settings["fetch_start_time"] = guard.strftime("%H:%M")
+    settings["fetch_start_time"] = _guard_fetch_start_time()
     for key, value in settings.items():
         conn.execute(
             "INSERT INTO settings(key, value) VALUES (%s, %s)",
