@@ -138,6 +138,15 @@ motion:
 - **ボタン**：主要は navy 背景に白文字。副ボタンは白背景＋navy 文字。
   危険操作は danger 背景。削除などの小ボタンは白背景＋赤文字＋border-input の枠。
 - **入力欄**：border-input の枠、角丸 6px（フィルタ内は 8px）、文字 14px。
+- **スイッチ**：設定画面のオン/オフ設定専用。チェックボックス
+  （`input.switch`）の見た目だけを変えたもので、入力自体をトラック
+  （pill 形）、`::after` をノブとして描く。オフは border-input 色、
+  オンは navy で、ノブが右へスライドする。切り替えはトランジション
+  （--motion-fast）で動かす。name／checked の契約は変えない。
+- **チェックボックス**：ダイアログ内の選択肢（複数選択など）用。
+  共通CSS（`input[type="checkbox"]:not(.switch)`）で装飾し、画面側に
+  クラス追加は不要。border-input の枠＋白面で、チェック時は navy 塗りに
+  白のチェックマーク。
 - **タグ**：pill 形、surface-hover 背景、border-input の枠、12.5px。
   「到達」のような状態タグもこの形を崩さない。
 - **タブ**：pill 形の並び。選択中は navy 背景に白文字。

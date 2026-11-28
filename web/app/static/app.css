@@ -107,3 +107,12 @@
   .memo-tip-box { position: fixed; width: 300px; white-space: pre-wrap; background: var(--color-navy); color: var(--color-surface); font-size: 13px; font-weight: 400; line-height: 1.6; padding: 10px 12px; border-radius: var(--radius-md); box-shadow: 0 4px 16px rgba(0,0,0,.25); z-index: 200; pointer-events: none; text-align: left; }
   .preview-name { font-weight: 700; color: var(--color-navy); }
   .preview-err { color: var(--color-negative); }
+  .switch { --switch-w: 44px; --switch-h: 24px; --switch-knob: 18px; --switch-pad: 3px; appearance: none; -webkit-appearance: none; width: var(--switch-w); height: var(--switch-h); margin: 0; border: none; border-radius: var(--radius-pill); background: var(--color-border-input); position: relative; display: inline-block; vertical-align: middle; cursor: pointer; flex: none; transition: background var(--motion-fast); }
+  .switch::after { content: ""; position: absolute; top: var(--switch-pad); left: var(--switch-pad); width: var(--switch-knob); height: var(--switch-knob); border-radius: 50%; background: var(--color-surface); box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform var(--motion-fast); }
+  .switch:checked { background: var(--color-navy); }
+  .switch:checked::after { transform: translateX(calc(var(--switch-w) - var(--switch-knob) - 2 * var(--switch-pad))); }
+  .switch:focus-visible { outline: 2px solid var(--color-navy-mid); outline-offset: 2px; }
+  input[type="checkbox"]:not(.switch) { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; margin: 0; border: 1.5px solid var(--color-border-input); border-radius: var(--radius-sm); background: var(--color-surface); display: inline-grid; place-content: center; vertical-align: middle; cursor: pointer; flex: none; transition: background var(--motion-fast), border-color var(--motion-fast); }
+  input[type="checkbox"]:not(.switch):checked { background: var(--color-navy); border-color: var(--color-navy); }
+  input[type="checkbox"]:not(.switch):checked::after { content: ""; width: 5px; height: 10px; border: solid var(--color-surface); border-width: 0 2.5px 2.5px 0; transform: rotate(45deg); }
+  input[type="checkbox"]:not(.switch):focus-visible { outline: 2px solid var(--color-navy-mid); outline-offset: 2px; }
